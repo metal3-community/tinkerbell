@@ -258,9 +258,9 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "valid config with all fields",
 			config: &Config{
-				ImagePath:     "/var/lib/hook",
+				ImagePath:     "/var/lib/images",
 				OCIRegistry:   "ghcr.io",
-				OCIRepository: "tinkerbell/hook",
+				OCIRepository: "tinkerbell/captain/artifacts",
 				OCIReference:  "latest",
 				PullTimeout:   10 * time.Minute,
 			},
@@ -269,9 +269,9 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "valid config with minimal fields",
 			config: &Config{
-				ImagePath:     "/var/lib/hook",
+				ImagePath:     "/var/lib/images",
 				OCIRegistry:   "ghcr.io",
-				OCIRepository: "tinkerbell/hook",
+				OCIRepository: "tinkerbell/captain/artifacts",
 				OCIReference:  "latest",
 				PullTimeout:   1 * time.Minute,
 			},
@@ -280,9 +280,9 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "config with sha256 digest reference",
 			config: &Config{
-				ImagePath:     "/var/lib/hook",
+				ImagePath:     "/var/lib/images",
 				OCIRegistry:   "ghcr.io",
-				OCIRepository: "tinkerbell/hook",
+				OCIRepository: "tinkerbell/captain/artifacts",
 				OCIReference:  "sha256:1234567890abcdef",
 				PullTimeout:   5 * time.Minute,
 			},

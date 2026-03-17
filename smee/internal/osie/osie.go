@@ -22,7 +22,7 @@ import (
 const (
 	// DefaultURLPrefix is the default URI path prefix for all OSIE file requests.
 	DefaultURLPrefix     = "/images/"
-	defaultOCIReference  = "v0.1.0"
+	defaultOCIReference  = "v0.0.0-9ea7a56"
 	defaultOCIRepository = "tinkerbell/captain/artifacts"
 	defaultImagePath     = "/var/lib/images"
 )
@@ -42,7 +42,7 @@ type Config struct {
 	ImagePath string
 	// OCIRegistry is the OCI registry URL (e.g., "ghcr.io").
 	OCIRegistry string
-	// OCIRepository is the repository path (e.g., "tinkerbell/hook").
+	// OCIRepository is the repository path (e.g., "tinkerbell/captain/artifacts").
 	OCIRepository string
 	// OCIReference is the image tag or digest (e.g., "latest", "v1.2.3", "sha256:...").
 	OCIReference string

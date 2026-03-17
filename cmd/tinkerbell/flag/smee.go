@@ -489,7 +489,7 @@ var OSIEOCIRegistry = Config{
 
 var OSIEOCIRepository = Config{
 	Name:  "osie-oci-repository",
-	Usage: "[osie] OCI repository path (e.g., tinkerbell/hook)",
+	Usage: "[osie] OCI repository path (e.g., tinkerbell/captain/artifacts)",
 }
 
 var OSIEOCIReference = Config{

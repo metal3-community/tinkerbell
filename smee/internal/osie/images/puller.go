@@ -48,7 +48,7 @@ func WithRegistry(registry string) Option {
 	return func(p *Puller) { p.registry = registry }
 }
 
-// WithRepository sets the OCI repository path (e.g. "tinkerbell/hook").
+// WithRepository sets the OCI repository path (e.g. "tinkerbell/captain/artifacts").
 func WithRepository(repository string) Option {
 	return func(p *Puller) { p.repository = repository }
 }

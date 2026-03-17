@@ -321,10 +321,10 @@ func NewConfig(c Config, publicIP netip.Addr) *Config {
 		OSIE: OSIE{
 			Enabled:       false,
 			URLPrefix:     OSIEURI,
-			ImagePath:     "/var/lib/hook",
+			ImagePath:     "/var/lib/images",
 			OCIRegistry:   "ghcr.io",
-			OCIRepository: "tinkerbell/hook",
-			OCIReference:  "latest",
+			OCIRepository: "tinkerbell/captain/artifacts",
+			OCIReference:  "v0.0.0-9ea7a56",
 			PullTimeout:   10 * time.Minute,
 		},
 		OTEL: OTEL{
@@ -496,9 +496,9 @@ func (c *Config) OSIETFTPHandler(log logr.Logger) tftphandler.Handler {
 	return oc.TFTPHandler(log)
 }
 
-// OSIEStart starts the OSIE background service (OCI image pulling).
+// osieStart starts the OSIE background service (OCI image pulling).
 // Returns nil if the OSIE service is disabled.
-func (c *Config) OSIEStart(ctx context.Context, log logr.Logger) error {
+func (c *Config) osieStart(ctx context.Context, log logr.Logger) error {
 	if !c.OSIE.Enabled {
 		return nil
 	}
@@ -561,6 +561,15 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 			}
 			<-ctx.Done()
 			log.Info("syslog server stopped")
+			return nil
+		})
+	}
+
+	if c.OSIE.Enabled {
+		g.Go(func() error {
+			if err := c.osieStart(ctx, log.WithName("osie")); err != nil {
+				return fmt.Errorf("starting OSIE service: %w", err)
+			}
 			return nil
 		})
 	}

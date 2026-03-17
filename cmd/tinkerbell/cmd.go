@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/avast/retry-go/v4"
 	"github.com/go-logr/logr"
 	"github.com/peterbourgon/ff/v4"
@@ -24,6 +25,7 @@ import (
 	"github.com/tinkerbell/tinkerbell/tink/server"
 	"github.com/tinkerbell/tinkerbell/tootles"
 	"github.com/tinkerbell/tinkerbell/ui"
+	"go.uber.org/automaxprocs/maxprocs"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/credentials"
 )
@@ -35,8 +37,8 @@ var (
 	embeddedKubeControllerManagerExecute func(context.Context, string) error
 )
 
-func Execute(ctx context.Context, cancel context.CancelFunc, args []string) error { //nolint:cyclop // Will need to look into reducing the cyclomatic complexity.
-	startTime := time.Now() // used in the HTTP healthcheck handler to report uptime.
+func Execute(ctx context.Context, cancel context.CancelFunc, args []string) error { //nolint:cyclop,gocognit // Will need to look into reducing the cyclomatic complexity.
+	startTime := time.Now()
 	globals := &flag.GlobalConfig{
 		BackendKubeConfig:    kubeConfig(),
 		PublicIP:             detectPublicIPv4(),
@@ -56,13 +58,17 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 			}
 			return netip.MustParseAddr("0.0.0.0")
 		}(),
+		MaxprocsEnable: true,
+		MemlimitRatio:  0.9,
 		EmbeddedGlobalConfig: flag.EmbeddedGlobalConfig{
 			EnableKubeAPIServer: (embeddedApiserverExecute != nil),
 			EnableETCD:          (embeddedEtcdExecute != nil),
 		},
 		BackendKubeOptions: flag.BackendKubeOptions{
-			QPS:   defaultQPS,   // Default QPS value. A negative value disables client-side ratelimiting.
-			Burst: defaultBurst, // Default burst value.
+			QPS:                         defaultQPS,      // Default QPS value. A negative value disables client-side ratelimiting.
+			Burst:                       defaultBurst,    // Default burst value.
+			APIServerHealthTimeout:      2 * time.Minute, // Default timeout: 2 minutes to prevent permanent error loops
+			APIServerHealthPollInterval: 2 * time.Second, // Default poll interval: check every 2 seconds
 		},
 	}
 
@@ -152,6 +158,24 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 	}
 
 	log := getLogger(globals.LogLevel)
+
+	// Configure Go runtime tuning before service startup.
+	if globals.MaxprocsEnable {
+		if _, err := maxprocs.Set(maxprocs.Logger(func(f string, a ...any) {
+			log.WithName("automaxprocs").Info(fmt.Sprintf(f, a...))
+		})); err != nil {
+			log.WithName("automaxprocs").Error(err, "failed to set GOMAXPROCS automatically")
+		}
+	}
+	if globals.MemlimitRatio > 0 {
+		if _, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(globals.MemlimitRatio),
+			memlimit.WithProvider(memlimit.ApplyFallback(memlimit.FromCgroup, memlimit.FromSystem)),
+		); err != nil {
+			log.WithName("automemlimit").Error(err, "failed to set GOMEMLIMIT automatically")
+		}
+	}
+
 	cliLog := log.WithName("cli")
 	cliLog.Info("starting tinkerbell",
 		"version", build.GitRevision(),
@@ -212,6 +236,9 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 
 	// Rufio Controller
 	rc.Config.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), rc.Config.EnableLeaderElection, rc.Config.LeaderElectionNamespace)
+
+	// Smee DHCP Interface
+	s.Config.DHCPInterface.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), s.Config.DHCPInterface.EnableLeaderElection, s.Config.DHCPInterface.LeaderElectionNamespace)
 
 	// Second star
 	if err := ssc.Convert(); err != nil {
@@ -286,7 +313,8 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 				return fmt.Errorf("failed to create kube backend with no indexes: %w", err)
 			}
 			// Wait for the API server to be healthy and ready.
-			if err := backendNoIndexes.WaitForAPIServer(ctx, cliLog, 20*time.Second, 5*time.Second, nil); err != nil {
+			// Use configurable timeout and poll interval to prevent permanent error loops on first boot.
+			if err := backendNoIndexes.WaitForAPIServer(ctx, cliLog, globals.BackendKubeOptions.APIServerHealthTimeout, globals.BackendKubeOptions.APIServerHealthPollInterval, nil); err != nil {
 				return fmt.Errorf("failed to wait for API server health: %w", err)
 			}
 
@@ -313,6 +341,7 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		tc.Config.DynamicClient = b
 		rc.Config.Client = b.ClientConfig
 		ssc.Config.Backend = b
+		s.Config.DHCPInterface.RestConfig = b.ClientConfig
 		if uic.Config.EnableAutoLogin {
 			uic.Config.AutoLoginRestConfig = b.ClientConfig
 			uic.Config.AutoLoginNamespace = globals.BackendKubeNamespace
@@ -351,7 +380,7 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		s.Config.InitMetrics()
 	}
 
-	// Smee (non-HTTP services: DHCP, TFTP, syslog)
+	// Smee (non-HTTP-TFTP services: DHCP, OCI puller, syslog)
 	g.Go(func() error {
 		if !globals.EnableSmee {
 			cliLog.Info("smee service is disabled")
@@ -369,6 +398,11 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 	// HTTP server
 	g.Go(func() error {
 		return startHTTPServer(ctx, globals, s, h, uic, startTime)
+	})
+
+	// TFTP server
+	g.Go(func() error {
+		return startTFTPServer(ctx, globals, s)
 	})
 
 	// Tink Server

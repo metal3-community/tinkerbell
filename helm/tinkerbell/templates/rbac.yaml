@@ -1,0 +1,146 @@
+{{- if .Values.rbac.create }}
+# Main ClusterRole / Role — grants permissions to manage Tinkerbell CRDs and core resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ .Values.rbac.type }}
+metadata:
+  name: {{ include "tinkerbell.fullname" . }}-role
+  {{- if eq .Values.rbac.type "Role" }}
+  namespace: {{ include "tinkerbell.namespace" . }}
+  {{- end }}
+  labels:
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["create", "delete", "get", "list", "patch", "update"]
+  - apiGroups: ["tinkerbell.org"]
+    resources: ["hardware", "hardware/status"]
+    verbs: ["create", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["tinkerbell.org"]
+    resources: ["templates", "templates/status"]
+    verbs: ["get", "list", "patch", "update", "watch"]
+  - apiGroups: ["tinkerbell.org"]
+    resources: ["workflows", "workflows/status"]
+    verbs: ["create", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["tinkerbell.org"]
+    resources: ["workflowrulesets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["bmc.tinkerbell.org"]
+    resources: ["jobs", "jobs/status", "tasks", "tasks/status"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch", "deletecollection"]
+  - apiGroups: ["bmc.tinkerbell.org"]
+    resources: ["machines", "machines/status"]
+    verbs: ["get", "list", "patch", "update", "watch"]
+  - apiGroups: ["bmc.tinkerbell.org"]
+    resources: ["jobs/finalizers", "machines/finalizers", "tasks/finalizers"]
+    verbs: ["update"]
+  {{- range .Values.rbac.additionalRoleRules }}
+  {{- if and (hasKey . "resources") (hasKey . "nonResourceURLs") }}
+    {{- fail "rbac.additionalRoleRules: a rule must not specify both 'resources' and 'nonResourceURLs' (they are mutually exclusive per Kubernetes RBAC PolicyRule)" }}
+  {{- end }}
+  {{- if not (or (hasKey . "resources") (hasKey . "nonResourceURLs")) }}
+    {{- fail "rbac.additionalRoleRules: each rule must specify either 'resources' or 'nonResourceURLs'" }}
+  {{- end }}
+  - {{- if hasKey . "resources" }}
+    apiGroups: {{ include "tinkerbell.toJsonArray" .apiGroups }}
+    resources: {{ include "tinkerbell.toJsonArray" .resources }}
+    {{- with (include "tinkerbell.toOptionalJsonArray" .resourceNames) }}
+    resourceNames: {{ . }}
+    {{- end }}
+    {{- else }}
+    nonResourceURLs: {{ include "tinkerbell.toJsonArray" .nonResourceURLs }}
+    {{- end }}
+    verbs: {{ include "tinkerbell.toJsonArray" .verbs }}
+  {{- end }}
+---
+# Main ClusterRoleBinding / RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ .Values.rbac.type }}Binding
+metadata:
+  name: {{ include "tinkerbell.fullname" . }}-binding
+  {{- if eq .Values.rbac.type "Role" }}
+  namespace: {{ include "tinkerbell.namespace" . }}
+  {{- end }}
+  labels:
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ .Values.rbac.type }}
+  name: {{ include "tinkerbell.fullname" . }}-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tinkerbell.serviceAccountName" . }}
+    namespace: {{ include "tinkerbell.namespace" . }}
+{{- if .Values.rbac.secrets.enabled }}
+---
+# Secrets ClusterRole / Role — grants read-only access to Secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ .Values.rbac.type }}
+metadata:
+  name: {{ include "tinkerbell.fullname" . }}-secrets
+  {{- if eq .Values.rbac.type "Role" }}
+  namespace: {{ include "tinkerbell.namespace" . }}
+  {{- end }}
+  labels:
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+# Secrets ClusterRoleBinding / RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ .Values.rbac.type }}Binding
+metadata:
+  name: {{ include "tinkerbell.fullname" . }}-secrets
+  {{- if eq .Values.rbac.type "Role" }}
+  namespace: {{ include "tinkerbell.namespace" . }}
+  {{- end }}
+  labels:
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ .Values.rbac.type }}
+  name: {{ include "tinkerbell.fullname" . }}-secrets
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tinkerbell.serviceAccountName" . }}
+    namespace: {{ include "tinkerbell.namespace" . }}
+{{- end }}
+---
+# Leader election Role — always namespaced, grants access to leases and configmaps for leader election
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "tinkerbell.fullname" . }}-leader-election
+  namespace: {{ include "tinkerbell.namespace" . }}
+  labels:
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+# Leader election RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "tinkerbell.fullname" . }}-leader-election
+  namespace: {{ include "tinkerbell.namespace" . }}
+  labels:
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "tinkerbell.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tinkerbell.serviceAccountName" . }}
+    namespace: {{ include "tinkerbell.namespace" . }}
+{{- end }}

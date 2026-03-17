@@ -28,62 +28,72 @@ deployment:
       trustedProxies: {{ .Values.global.trustedProxies }}
     rufio:
       bmcConnectTimeout: {{ .Values.deployment.envs.rufio.bmcConnectTimeout }}
-      enableLeaderElection: {{ .Values.deployment.envs.rufio.enableLeaderElection }}
-      leaderElectionNamespace: {{ .Values.deployment.envs.rufio.leaderElectionNamespace }}
+      controllerEnableLeaderElection: {{ .Values.deployment.envs.rufio.controllerEnableLeaderElection }}
+      controllerLeaderElectionNamespace: {{ .Values.deployment.envs.rufio.controllerLeaderElectionNamespace }}
+      controllerMetricsAddr: {{ .Values.deployment.envs.rufio.controllerMetricsAddr }}
+      controllerProbeAddr: {{ .Values.deployment.envs.rufio.controllerProbeAddr }}
       logLevel: {{ .Values.deployment.envs.rufio.logLevel }}
+      maxConcurrentReconciles: {{ .Values.deployment.envs.rufio.maxConcurrentReconciles }}
       powerCheckInterval: {{ .Values.deployment.envs.rufio.powerCheckInterval }}
     secondstar:
-      bindPort: {{ .Values.deployment.envs.secondstar.bindPort }}
-      hostKeyPath: {{ .Values.deployment.envs.secondstar.hostKeyPath }}
+      port: {{ .Values.deployment.envs.secondstar.port }}
+      hostKey: {{ .Values.deployment.envs.secondstar.hostKey }}
       ipmitoolPath: {{ .Values.deployment.envs.secondstar.ipmitoolPath }}
       idleTimeout: {{ .Values.deployment.envs.secondstar.idleTimeout }}
       logLevel: {{ .Values.deployment.envs.secondstar.logLevel }}
     smee:
-      dhcpBindAddr: {{ .Values.deployment.envs.smee.dhcpBindAddr }}
-      dhcpBindInterface: {{ .Values.deployment.envs.smee.dhcpBindInterface }}
-      dhcpEnabled: {{ .Values.deployment.envs.smee.dhcpEnabled }}
-      dhcpIPForPacket: {{ .Values.deployment.envs.smee.dhcpIPForPacket }}
-      dhcpIpxeHttpBinaryHost: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryHost }}
-      dhcpIpxeHttpBinaryPath: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryPath }}
-      dhcpIpxeHttpBinaryPort: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryPort }}
-      dhcpIpxeHttpBinaryScheme: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryScheme }}
-      dhcpIpxeHttpScriptHost: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptHost }}
-      dhcpIpxeHttpScriptPath: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptPath }}
-      dhcpIpxeHttpScriptPort: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptPort }}
-      dhcpIpxeHttpScriptPrependMac: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptPrependMac }}
-      dhcpIpxeHttpScriptScheme: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptScheme }}
-      dhcpMode: {{ .Values.deployment.envs.smee.dhcpMode }}
-      dhcpSyslogIP: {{ .Values.deployment.envs.smee.dhcpSyslogIP }}
-      dhcpTftpIP: {{ .Values.deployment.envs.smee.dhcpTftpIP }}
-      dhcpTftpPort: {{ .Values.deployment.envs.smee.dhcpTftpPort }}
-      ipxeEmbeddedScriptPatch: {{ .Values.deployment.envs.smee.ipxeEmbeddedScriptPatch }}
-      ipxeHttpBinaryEnabled: {{ .Values.deployment.envs.smee.ipxeHttpBinaryEnabled }}
-      ipxeHttpScriptEnabled: {{ .Values.deployment.envs.smee.ipxeHttpScriptEnabled }}
-      ipxeHttpScriptExtraKernelArgs: {{ .Values.deployment.envs.smee.ipxeHttpScriptExtraKernelArgs | toYaml | nindent 8 }}
-      ipxeHttpScriptTrustedProxies: {{ .Values.deployment.envs.smee.ipxeHttpScriptTrustedProxies }}
-      ipxeHttpScriptOsieURL: {{ .Values.deployment.envs.smee.ipxeHttpScriptOsieURL }}
-      ipxeHttpScriptRetries: {{ .Values.deployment.envs.smee.ipxeHttpScriptRetries }}
-      ipxeHttpScriptRetryDelay: {{ .Values.deployment.envs.smee.ipxeHttpScriptRetryDelay }}
-      ipxeScriptTinkServerAddrPort: {{ .Values.deployment.envs.smee.ipxeScriptTinkServerAddrPort }}
-      ipxeScriptTinkServerInsecureTLS: {{ .Values.deployment.envs.smee.ipxeScriptTinkServerInsecureTLS }}
-      ipxeScriptTinkServerUseTLS: {{ .Values.deployment.envs.smee.ipxeScriptTinkServerUseTLS }}
-      isoEnabled: {{ .Values.deployment.envs.smee.isoEnabled }}
-      isoPatchMagicString: {{ .Values.deployment.envs.smee.isoPatchMagicString }}
-      isoStaticIPAMEnabled: {{ .Values.deployment.envs.smee.isoStaticIPAMEnabled }}
-      isoUpstreamURL: {{ .Values.deployment.envs.smee.isoUpstreamURL }}
       logLevel: {{ .Values.deployment.envs.smee.logLevel }}
-      syslogBindAddr: {{ .Values.deployment.envs.smee.syslogBindAddr }}
-      syslogBindPort: {{ .Values.deployment.envs.smee.syslogBindPort }}
-      syslogEnabled: {{ .Values.deployment.envs.smee.syslogEnabled }}
-      tftpBlockSize: {{ .Values.deployment.envs.smee.tftpBlockSize }}
-      tftpServerBindAddr: {{ .Values.deployment.envs.smee.tftpServerBindAddr }}
-      tftpServerBindPort: {{ .Values.deployment.envs.smee.tftpServerBindPort }}
-      tftpServerEnabled: {{ .Values.deployment.envs.smee.tftpServerEnabled }}
-      tftpTimeout: {{ .Values.deployment.envs.smee.tftpTimeout }}
+    ipxe:
+      binaryInjectMacAddrFormat: {{ .Values.deployment.envs.ipxe.binaryInjectMacAddrFormat }}
+      embeddedScriptPatch: {{ .Values.deployment.envs.ipxe.embeddedScriptPatch }}
+      httpBinaryEnabled: {{ .Values.deployment.envs.ipxe.httpBinaryEnabled }}
+      httpScriptBindAddr: {{ .Values.deployment.envs.ipxe.httpScriptBindAddr }}
+      httpScriptBindPort: {{ .Values.deployment.envs.ipxe.httpScriptBindPort }}
+      httpScriptEnabled: {{ .Values.deployment.envs.ipxe.httpScriptEnabled }}
+      httpScriptExtraKernelArgs: {{ .Values.deployment.envs.ipxe.httpScriptExtraKernelArgs | toYaml | nindent 8 }}
+      httpScriptOsieUrl: {{ .Values.deployment.envs.ipxe.httpScriptOsieUrl }}
+      httpScriptRetries: {{ .Values.deployment.envs.ipxe.httpScriptRetries }}
+      httpScriptRetryDelay: {{ .Values.deployment.envs.ipxe.httpScriptRetryDelay }}
+      httpScriptTrustedProxies: {{ .Values.deployment.envs.ipxe.httpScriptTrustedProxies }}
+      overrideArchMapping: {{ .Values.deployment.envs.ipxe.overrideArchMapping }}
+      scriptTinkServerAddrPort: {{ .Values.deployment.envs.ipxe.scriptTinkServerAddrPort }}
+      scriptTinkServerInsecureTls: {{ .Values.deployment.envs.ipxe.scriptTinkServerInsecureTls }}
+      scriptTinkServerUseTls: {{ .Values.deployment.envs.ipxe.scriptTinkServerUseTls }}
+    tftp:
+      blockSize: {{ .Values.deployment.envs.tftp.blockSize }}
+      serverBindAddr: {{ .Values.deployment.envs.tftp.serverBindAddr }}
+      serverBindPort: {{ .Values.deployment.envs.tftp.serverBindPort }}
+      serverEnabled: {{ .Values.deployment.envs.tftp.serverEnabled }}
+      singlePort: {{ .Values.deployment.envs.tftp.singlePort }}
+      timeout: {{ .Values.deployment.envs.tftp.timeout }}
+    syslog:
+      bindAddr: {{ .Values.deployment.envs.syslog.bindAddr }}
+      bindPort: {{ .Values.deployment.envs.syslog.bindPort }}
+      enabled: {{ .Values.deployment.envs.syslog.enabled }}
+    iso:
+      enabled: {{ .Values.deployment.envs.iso.enabled }}
+      patchMagicString: {{ .Values.deployment.envs.iso.patchMagicString }}
+      staticIpamEnabled: {{ .Values.deployment.envs.iso.staticIpamEnabled }}
+      upstreamUrl: {{ .Values.deployment.envs.iso.upstreamUrl }}
+    https:
+      bindPort: {{ .Values.deployment.envs.https.bindPort }}
+    dhcpInterface:
+      enabled: {{ .Values.deployment.envs.dhcpInterface.enabled }}
+      leaderElectionEnabled: {{ .Values.deployment.envs.dhcpInterface.leaderElectionEnabled }}
+      leaderElectionIdentity: {{ .Values.deployment.envs.dhcpInterface.leaderElectionIdentity }}
+      leaderElectionLeaseDuration: {{ .Values.deployment.envs.dhcpInterface.leaderElectionLeaseDuration }}
+      leaderElectionLockName: {{ .Values.deployment.envs.dhcpInterface.leaderElectionLockName }}
+      leaderElectionNamespace: {{ .Values.deployment.envs.dhcpInterface.leaderElectionNamespace }}
+      leaderElectionRenewDeadline: {{ .Values.deployment.envs.dhcpInterface.leaderElectionRenewDeadline }}
+      leaderElectionRetryPeriod: {{ .Values.deployment.envs.dhcpInterface.leaderElectionRetryPeriod }}
+      srcInterface: {{ .Values.deployment.envs.dhcpInterface.srcInterface }}
+      type: {{ .Values.deployment.envs.dhcpInterface.type }}
     tinkController:
       enableLeaderElection: {{ .Values.deployment.envs.tinkController.enableLeaderElection }}
       leaderElectionNamespace: {{ .Values.deployment.envs.tinkController.leaderElectionNamespace }}
       logLevel: {{ .Values.deployment.envs.tinkController.logLevel }}
+      metricsAddr: {{ .Values.deployment.envs.tinkController.metricsAddr }}
+      probeAddr: {{ .Values.deployment.envs.tinkController.probeAddr }}
     tinkServer:
       autoDiscoveryAutoEnrollmentEnabled: {{ .Values.deployment.envs.tinkServer.autoDiscoveryAutoEnrollmentEnabled }}
       autoDiscoveryEnabled: {{ .Values.deployment.envs.tinkServer.autoDiscoveryEnabled }}
@@ -93,9 +103,8 @@ deployment:
       bindPort: {{ .Values.deployment.envs.tinkServer.bindPort }}
       logLevel: {{ .Values.deployment.envs.tinkServer.logLevel }}
     tootles:
-      bindAddr: {{ .Values.deployment.envs.tootles.bindAddr }}
-      bindPort: {{ .Values.deployment.envs.tootles.bindPort }}
       debugMode: {{ .Values.deployment.envs.tootles.debugMode }}
+      instanceEndpoint: {{ .Values.deployment.envs.tootles.instanceEndpoint }}
       logLevel: {{ .Values.deployment.envs.tootles.logLevel }}
   hostNetwork: {{ .Values.deployment.hostNetwork }}
   image: {{ .Values.deployment.image }}
@@ -199,7 +208,17 @@ optional:
         size: {{ .Values.stack.hook.persistence.localPersistentVolume.size }}
         storageClassName: {{ .Values.stack.hook.persistence.localPersistentVolume.storageClassName }}
     scriptImage: {{ .Values.optional.hookos.scriptImage }}
-  
+    selector:
+      app: {{ .Values.optional.hookos.selector.app }}
+    service:
+      annotations: {{ .Values.optional.hookos.service.annotations | toYaml | nindent 8 }}
+      lbClass: {{ .Values.optional.hookos.service.lbClass }}
+      loadBalancerIP: {{ .Values.optional.hookos.service.loadBalancerIP }}
+      type: {{ .Values.optional.hookos.service.type }}
+    singleNodeClusterConfig:
+      controlPlaneTolerationsEnabled: {{ .Values.optional.hookos.singleNodeClusterConfig.controlPlaneTolerationsEnabled }}
+      nodeAffinityWeight: {{ .Values.optional.hookos.singleNodeClusterConfig.nodeAffinityWeight }}
+
   kubevip:
     additionalEnv: {{ .Values.optional.kubevip.additionalEnv | toYaml | nindent 6 }}
     enabled: {{ .Values.stack.kubevip.enabled }}

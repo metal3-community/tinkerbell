@@ -36,6 +36,7 @@ const (
 	routeISO               = smee.ISOURI
 	routeIPXEBinary        = smee.IPXEBinaryURI
 	routeIPXEScript        = smee.IPXEScriptURI
+	routeOSIE              = smee.OSIEURI
 )
 
 // startHTTPServer registers all HTTP/HTTPS routes, applies middleware, and
@@ -60,6 +61,13 @@ func startHTTPServer(ctx context.Context, globals *flag.GlobalConfig, s *flag.Sm
 			routeList.Register(routeIPXEScript,
 				middleware.WithLogLevel(middleware.LogLevelAlways, sh),
 				"smee iPXE script handler",
+			)
+		}
+		if oh, err := s.Config.OSIEHandler(smeeLog); err == nil && oh != nil {
+			routeList.Register(routeOSIE,
+				middleware.WithLogLevel(middleware.LogLevelAlways, oh),
+				"smee OSIE image handler",
+				httpserver.WithHTTPSEnabled(tlsEnabled),
 			)
 		}
 		if isoH, err := s.Config.ISOHandler(smeeLog); err == nil && isoH != nil {

@@ -16,6 +16,7 @@ deployment:
   # It is not set because in the deployment.yaml a coalesce is used with this value
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
   agentImageTag:
+  annotations: {}
   daemonSet:
     enabled: false
   envs:
@@ -30,6 +31,7 @@ deployment:
       enableCRDMigrations: true
       enableRufioController: true
       enableSecondstar: true
+      enableHook: true
       enableSmee: true
       enableTootles: true
       enableTinkServer: true
@@ -44,69 +46,87 @@ deployment:
       tlsCertFile: ""
       tlsKeyFile: ""
       trustedProxies: ""
+      maxprocsEnable: true
+      memlimitRatio: 0.9
     rufio:
       bmcConnectTimeout: "2m0s"
-      enableLeaderElection: true
-      leaderElectionNamespace: ""
+      controllerEnableLeaderElection: true
+      controllerLeaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
       logLevel: 0
       maxConcurrentReconciles: 1
       powerCheckInterval: "30m0s"
     secondstar:
-      bindPort: 2222
-      hostKeyPath: ""
+      port: 2222
+      hostKey: ""
       ipmitoolPath: "/usr/sbin/ipmitool"
       idleTimeout: "15m"
       logLevel: 0
-    smee:
-      dhcpBindAddr: ""
-      dhcpBindInterface: ""
-      dhcpEnabled: true
-      dhcpIPForPacket: ""
-      dhcpIpxeHttpBinaryHost: ""
-      dhcpIpxeHttpBinaryPath: "/ipxe/binary"
-      dhcpIpxeHttpBinaryPort: 7080
-      dhcpIpxeHttpBinaryScheme: "http"
-      dhcpIpxeHttpScriptHost: ""
-      dhcpIpxeHttpScriptPath: "/ipxe/script/auto.ipxe"
-      dhcpIpxeHttpScriptPort: 7080
-      dhcpIpxeHttpScriptPrependMac: true
-      dhcpIpxeHttpScriptScheme: "http"
-      dhcpMode: "reservation" # reservation, proxy, auto-proxy
-      dhcpSyslogIP: ""
-      dhcpTftpIP: ""
-      dhcpTftpPort: 69
-      ipxeBinaryInjectMacAddrFormat: "" # one of colon, dot, dash, no-delimiter, empty. defaults to colon when empty.
-      ipxeEmbeddedScriptPatch: ""
-      ipxeHttpBinaryEnabled: true
-      ipxeHttpScriptEnabled: true
-      ipxeHttpScriptExtraKernelArgs: [] # Additional kernel arguments to pass to the OSIE. (k=v k=v) that are appended to the kernel cmdline in the iPXE script
-      ipxeHttpScriptKernelName: "vmlinuz" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
-      ipxeHttpScriptInitrdName: "initramfs" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
-      ipxeHttpScriptTrustedProxies: ""
-      ipxeHttpScriptOsieURL: ""
-      ipxeHttpScriptRetries: 1
-      ipxeHttpScriptRetryDelay: 1
-      ipxeOverrideArchMapping: "" # a comma separated list of <arch>=<binary> pairs. See the iPXE Architecture Mapping documentation for more details.
-      ipxeScriptTinkServerAddrPort: ""
-      ipxeScriptTinkServerInsecureTLS: false
-      ipxeScriptTinkServerUseTLS: false
-      isoEnabled: true
-      isoPatchMagicString: ""
-      isoStaticIPAMEnabled: true
-      isoUpstreamURL: ""
+    hook:
+      debugMode: false
       logLevel: 0
-      syslogBindAddr: ""
-      syslogBindPort: 514
-      syslogEnabled: true
-      tftpBlockSize: 512
-      tftpServerBindAddr: ""
-      tftpServerBindPort: 69
-      tftpServerEnabled: true
-      tftpTimeout: "10s"
-      tftpSinglePort: true # if true, use single port mode for TFTP server
+    dhcp:
+      bindAddr: ""
+      bindInterface: ""
+      enabled: true
+      enableNetbootOptions: true
+      ipForPacket: ""
+      ipxeHttpBinaryHost: ""
+      ipxeHttpBinaryPath: "/ipxe/binary"
+      ipxeHttpBinaryPort: 7080
+      ipxeHttpBinaryScheme: "http"
+      ipxeHttpScriptHost: ""
+      ipxeHttpScriptPath: "/ipxe/script/auto.ipxe"
+      ipxeHttpScriptPort: 7080
+      ipxeHttpScriptPrependMac: true
+      ipxeHttpScriptScheme: "http"
+      mode: "reservation" # reservation, proxy, auto-proxy
+      syslogIP: ""
+      tftpIP: ""
+      tftpPort: 69
+    smee:
+      logLevel: 0
+    ipxe:
+      binaryInjectMacAddrFormat: "" # one of colon, dot, dash, no-delimiter, empty. defaults to colon when empty.
+      embeddedScriptPatch: ""
+      httpBinaryEnabled: true
+      httpScriptBindAddr: ""
+      httpScriptEnabled: true
+      httpScriptExtraKernelArgs: [] # Additional kernel arguments to pass to the OSIE. (k=v k=v) that are appended to the kernel cmdline in the iPXE script
+      httpScriptInitrdName: "initramfs" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
+      httpScriptKernelName: "vmlinuz" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
+      httpScriptOsieUrl: ""
+      httpScriptRetries: 1
+      httpScriptRetryDelay: 1
+      httpScriptTrustedProxies: ""
+      overrideArchMapping: "" # a comma separated list of <arch>=<binary> pairs. See the iPXE Architecture Mapping documentation for more details.
+      scriptTinkServerAddrPort: ""
+      scriptTinkServerInsecureTls: false
+      scriptTinkServerUseTls: false
+    tftp:
+      blockSize: 512
+      serverBindAddr: ""
+      serverBindPort: 69
+      serverEnabled: true
+      singlePort: true # if true, use single port mode for TFTP server
+      timeout: "10s"
+    syslog:
+      bindAddr: ""
+      bindPort: 514
+      enabled: true
+    iso:
+      enabled: true
+      patchMagicString: ""
+      staticIpamEnabled: true
+      upstreamUrl: ""
+    https:
+      bindPort: 7272
+    dhcpInterface:
+      enabled: false
+      leaderElectionEnabled: false
+      leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
     tinkController:
       enableLeaderElection: true
-      leaderElectionNamespace: ""
+      leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
       logLevel: 0
       maxConcurrentReconciles: 1
       referenceAllowListRules: {}
@@ -136,7 +156,7 @@ deployment:
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
   imageTag:
   init:
-    enabled: true
+    enabled: false
     # if `interfaceMode: ipvlan`, then ghcr.io/jacobweinstock/relay-init:v0.1.0 (has nmap and nmap-scripts) is required. Otherwise, alpine can be used.
     image: ghcr.io/jacobweinstock/relay-init:v0.1.0
     # interfaceMode determines how we create the interface needed to listen for DHCP broadcast traffic.
@@ -157,6 +177,45 @@ deployment:
   selector: {}
   strategy:
     type: RollingUpdate
+  # Kubernetes probes configuration
+  # Uses Smee's /healthcheck endpoint on the HTTP script server port (7171)
+  probes:
+    # Liveness probe - restarts the container if it fails
+    liveness:
+      enabled: true
+      httpGet:
+        path: /healthcheck
+        port: http
+        scheme: HTTP
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    # Readiness probe - removes pod from service endpoints if it fails
+    readiness:
+      enabled: true
+      httpGet:
+        path: /healthcheck
+        port: http
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    # Startup probe - gives the container time to start before liveness kicks in
+    startup:
+      enabled: true
+      httpGet:
+        path: /healthcheck
+        port: http
+        scheme: HTTP
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 30
+      successThreshold: 1
   tolerations: []
   # Additional volumes on the output Deployment definition.
   volumes: []
@@ -183,6 +242,7 @@ rbac:
   # Non-resource URL rule example:
   # - nonResourceURLs: ["/healthz"] # Required. Non-resource URL paths.
   #   verbs: ["get"]                # Required. Allowed operations.
+  create: true
   name: tinkerbell
   type: ClusterRole # or Role
   secrets:
@@ -225,8 +285,13 @@ service:
       protocol: TCP
   selector:
     app: tinkerbell
+  sessionAffinity: None
+  sessionAffinityConfig: {}
   type: LoadBalancer
 trustedProxies: []
+
+# Enable creating the tinkerbell configmap
+createConfigmap: true
 
 optional:
   # enable migration to convert a 0.6.2 values.yaml to a v0.19.x values.yaml.
@@ -271,7 +336,7 @@ optional:
     # downloadURL only works with the > 0.8.1 Hook release because
     # previous Hook versions didn't provide a checksum file.
     downloadURL: https://github.com/tinkerbell/hook/releases/download/v0.11.1
-    enabled: true
+    enabled: false
     extension: tar.gz # iso, tar.gz, both
     kernelVersion: both # 5.10, 6.6, both
     persistence:
@@ -304,7 +369,7 @@ optional:
     service:
       annotations: {}
       lbClass:
-      loadBalancerIP: 
+      loadBalancerIP:
       type:
     affinity: {}
 
@@ -319,7 +384,7 @@ optional:
     #   - name: MY_ENV_VAR
     #     value: my-value
     additionalEnv: []
-    enabled: true
+    enabled: false
     image: ghcr.io/kube-vip/kube-vip:v1.0.0
     imagePullPolicy: IfNotPresent
     # Customize the interface KubeVIP advertises on. When unset, KubeVIP will autodetect the interface.

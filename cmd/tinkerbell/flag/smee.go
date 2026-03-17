@@ -124,6 +124,17 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(ISOPatchMagicString, ffval.NewValueDefault(&sc.Config.ISO.PatchMagicString, sc.Config.ISO.PatchMagicString))
 	fs.Register(ISOStaticIPAMEnabled, ffval.NewValueDefault(&sc.Config.ISO.StaticIPAMEnabled, sc.Config.ISO.StaticIPAMEnabled))
 
+	// OSIE Flags
+	fs.Register(OSIEEnabled, ffval.NewValueDefault(&sc.Config.OSIE.Enabled, sc.Config.OSIE.Enabled))
+	fs.Register(OSIEURLPrefix, ffval.NewValueDefault(&sc.Config.OSIE.URLPrefix, sc.Config.OSIE.URLPrefix))
+	fs.Register(OSIEImagePath, ffval.NewValueDefault(&sc.Config.OSIE.ImagePath, sc.Config.OSIE.ImagePath))
+	fs.Register(OSIEOCIRegistry, ffval.NewValueDefault(&sc.Config.OSIE.OCIRegistry, sc.Config.OSIE.OCIRegistry))
+	fs.Register(OSIEOCIRepository, ffval.NewValueDefault(&sc.Config.OSIE.OCIRepository, sc.Config.OSIE.OCIRepository))
+	fs.Register(OSIEOCIReference, ffval.NewValueDefault(&sc.Config.OSIE.OCIReference, sc.Config.OSIE.OCIReference))
+	fs.Register(OSIEOCIUsername, ffval.NewValueDefault(&sc.Config.OSIE.OCIUsername, sc.Config.OSIE.OCIUsername))
+	fs.Register(OSIEOCIPassword, ffval.NewValueDefault(&sc.Config.OSIE.OCIPassword, sc.Config.OSIE.OCIPassword))
+	fs.Register(OSIEPullTimeout, ffval.NewValueDefault(&sc.Config.OSIE.PullTimeout, sc.Config.OSIE.PullTimeout))
+
 	// Log level
 	fs.Register(SmeeLogLevel, ffval.NewValueDefault(&sc.LogLevel, sc.LogLevel))
 
@@ -139,6 +150,11 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(TFTPTimeout, ffval.NewValueDefault(&sc.Config.TFTP.Timeout, sc.Config.TFTP.Timeout))
 	fs.Register(TFTPBlockSize, ffval.NewValueDefault(&sc.Config.TFTP.BlockSize, sc.Config.TFTP.BlockSize))
 	fs.Register(TFTPSinglePort, ffval.NewValueDefault(&sc.Config.TFTP.SinglePort, sc.Config.TFTP.SinglePort))
+
+	// DHCP Interface Management Flags
+	fs.Register(DHCPInterfaceEnabled, ffval.NewValueDefault(&sc.Config.DHCPInterface.Enabled, sc.Config.DHCPInterface.Enabled))
+	fs.Register(DHCPInterfaceLeaderElectionEnabled, ffval.NewValueDefault(&sc.Config.DHCPInterface.EnableLeaderElection, sc.Config.DHCPInterface.EnableLeaderElection))
+	fs.Register(DHCPInterfaceLeaderElectionNamespace, ffval.NewValueDefault(&sc.Config.DHCPInterface.LeaderElectionNamespace, sc.Config.DHCPInterface.LeaderElectionNamespace))
 }
 
 // Convert CLI specific fields to smee.Config fields.
@@ -450,6 +466,52 @@ var ISOStaticIPAMEnabled = Config{
 	Usage: "[iso] enable static IPAM when patching the source (upstream) ISO",
 }
 
+// OSIE flags.
+var OSIEEnabled = Config{
+	Name:  "osie-enabled",
+	Usage: "[osie] enable OSIE image service",
+}
+
+var OSIEURLPrefix = Config{
+	Name:  "osie-url-prefix",
+	Usage: "[osie] URL path prefix for serving OSIE files (e.g., /images/)",
+}
+
+var OSIEImagePath = Config{
+	Name:  "osie-image-path",
+	Usage: "[osie] directory path where OSIE images are stored",
+}
+
+var OSIEOCIRegistry = Config{
+	Name:  "osie-oci-registry",
+	Usage: "[osie] OCI registry URL (e.g., ghcr.io, docker.io)",
+}
+
+var OSIEOCIRepository = Config{
+	Name:  "osie-oci-repository",
+	Usage: "[osie] OCI repository path (e.g., tinkerbell/hook)",
+}
+
+var OSIEOCIReference = Config{
+	Name:  "osie-oci-reference",
+	Usage: "[osie] OCI image reference - tag or digest (e.g., latest, v1.2.3, sha256:...)",
+}
+
+var OSIEOCIUsername = Config{
+	Name:  "osie-oci-username",
+	Usage: "[osie] optional username for OCI registry authentication",
+}
+
+var OSIEOCIPassword = Config{
+	Name:  "osie-oci-password",
+	Usage: "[osie] optional password for OCI registry authentication",
+}
+
+var OSIEPullTimeout = Config{
+	Name:  "osie-pull-timeout",
+	Usage: "[osie] timeout for pulling OCI images",
+}
+
 // Tink Server flags.
 var TinkServerAddrPort = Config{
 	Name:  "ipxe-script-tink-server-addr-port",
@@ -474,4 +536,19 @@ var SmeeLogLevel = Config{
 var DHCPEnableNetbootOptions = Config{
 	Name:  "dhcp-enable-netboot-options",
 	Usage: "[dhcp] enable sending netboot DHCP options",
+}
+
+var DHCPInterfaceEnabled = Config{
+	Name:  "dhcp-interface-enabled",
+	Usage: "[dhcp-interface] enable automatic DHCP proxy interface (macvlan) management",
+}
+
+var DHCPInterfaceLeaderElectionEnabled = Config{
+	Name:  "dhcp-interface-leader-election-enabled",
+	Usage: "[dhcp-interface] enable leader election so only the service leader pod creates the interface",
+}
+
+var DHCPInterfaceLeaderElectionNamespace = Config{
+	Name:  "dhcp-interface-leader-election-namespace",
+	Usage: "[dhcp-interface] namespace for leader election lease",
 }

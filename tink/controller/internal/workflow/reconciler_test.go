@@ -2026,7 +2026,7 @@ func TestReconcileWithMultipleTasksAndAgents(t *testing.T) {
 				}
 				return
 			}
-			if gotErr == nil && tc.wantErr != nil {
+			if errors.Is(gotErr, nil) && tc.wantErr != nil {
 				t.Errorf("Missing expected error: %v\nDescription: %s", tc.wantErr, tc.description)
 				return
 			}

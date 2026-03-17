@@ -26,6 +26,8 @@ go.work.sum
 
 # local binaries
 out/
+bin/
+dist/
 /tinkerbell
 
 # Go coverage profile
@@ -49,3 +51,6 @@ ui/node_modules/
 ui/out/
 .DS_Store
 Thumbs.db
+
+# Github
+.github/instructions/*.md

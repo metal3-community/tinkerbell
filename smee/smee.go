@@ -23,15 +23,19 @@ import (
 	"github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	"github.com/tinkerbell/tinkerbell/pkg/constant"
 	"github.com/tinkerbell/tinkerbell/pkg/data"
+	tftphandler "github.com/tinkerbell/tinkerbell/pkg/tftp/handler"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/handler/proxy"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/handler/reservation"
+	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/network"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/server"
 	"github.com/tinkerbell/tinkerbell/smee/internal/ipxe/binary"
 	"github.com/tinkerbell/tinkerbell/smee/internal/ipxe/script"
 	"github.com/tinkerbell/tinkerbell/smee/internal/iso"
 	"github.com/tinkerbell/tinkerbell/smee/internal/metric"
+	"github.com/tinkerbell/tinkerbell/smee/internal/osie"
 	"github.com/tinkerbell/tinkerbell/smee/internal/syslog"
 	"golang.org/x/sync/errgroup"
+	"k8s.io/client-go/rest"
 )
 
 // MetricsRegistry returns the Prometheus registry that contains all Smee metrics.
@@ -54,6 +58,7 @@ const (
 	isoMagicString = `464vn90e7rbj08xbwdjejmdf4it17c5zfzjyfhthbh19eij201hjgit021bmpdb9ctrc87x2ymc8e7icu4ffi15x1hah9iyaiz38ckyap8hwx2vt5rm44ixv4hau8iw718q5yd019um5dt2xpqqa2rjtdypzr5v1gun8un110hhwp8cex7pqrh2ivh0ynpm4zkkwc8wcn367zyethzy7q8hzudyeyzx3cgmxqbkh825gcak7kxzjbgjajwizryv7ec1xm2h0hh7pz29qmvtgfjj1vphpgq1zcbiiehv52wrjy9yq473d9t1rvryy6929nk435hfx55du3ih05kn5tju3vijreru1p6knc988d4gfdz28eragvryq5x8aibe5trxd0t6t7jwxkde34v6pj1khmp50k6qqj3nzgcfzabtgqkmeqhdedbvwf3byfdma4nkv3rcxugaj2d0ru30pa2fqadjqrtjnv8bu52xzxv7irbhyvygygxu1nt5z4fh9w1vwbdcmagep26d298zknykf2e88kumt59ab7nq79d8amnhhvbexgh48e8qc61vq2e9qkihzt1twk1ijfgw70nwizai15iqyted2dt9gfmf2gg7amzufre79hwqkddc1cd935ywacnkrnak6r7xzcz7zbmq3kt04u2hg1iuupid8rt4nyrju51e6uejb2ruu36g9aibmz3hnmvazptu8x5tyxk820g2cdpxjdij766bt2n3djur7v623a2v44juyfgz80ekgfb9hkibpxh3zgknw8a34t4jifhf116x15cei9hwch0fye3xyq0acuym8uhitu5evc4rag3ui0fny3qg4kju7zkfyy8hwh537urd5uixkzwu5bdvafz4jmv7imypj543xg5em8jk8cgk7c4504xdd5e4e71ihaumt6u5u2t1w7um92fepzae8p0vq93wdrd1756npu1pziiur1payc7kmdwyxg3hj5n4phxbc29x0tcddamjrwt260b0w`
 
 	// Defaults consumers can use.
+	DefaultTFFTPAnticipate = uint(1)
 	DefaultTFFTPPort       = 69
 	DefaultTFFTPBlockSize  = 512
 	DefaultTFFTPSinglePort = true
@@ -62,9 +67,13 @@ const (
 	DefaultSyslogPort      = 514
 	DefaultTinkServerPort  = 42113
 
+	IPXEBinaryPattern = `\.(efi|kpxe|pxe)$`
+	IPXEScriptPattern = `(^pxelinux\.cfg/|(config|cmdline)\.txt$)`
+
 	IPXEBinaryURI = "/ipxe/binary/"
 	IPXEScriptURI = "/ipxe/script/"
 	ISOURI        = "/iso/"
+	OSIEURI       = "/images/"
 )
 
 type DHCPMode string
@@ -97,6 +106,8 @@ type Config struct {
 	IPXE IPXE
 	// ISO is the configuration for the ISO service.
 	ISO ISO
+	// OSIE is the configuration for the OSIE image service.
+	OSIE OSIE
 	// OTEL is the configuration for OpenTelemetry.
 	OTEL OTEL
 	// Syslog is the configuration for the syslog service.
@@ -107,6 +118,8 @@ type Config struct {
 	TinkServer TinkServer
 	// TLS is the configuration for TLS.
 	TLS TLS
+	// DHCPInterface is the configuration for DHCP proxy interface management.
+	DHCPInterface DHCPInterface
 }
 
 type Syslog struct {
@@ -127,6 +140,8 @@ type TFTP struct {
 	BlockSize int
 	// SinglePort configures whether to use single-port TFTP mode.
 	SinglePort bool
+	// Anticipate is the number of packets to send before the first ACK. (Experimental)
+	Anticipate uint
 	// Timeout is the timeout for each serving each TFTP request.
 	Timeout time.Duration
 	// Enabled is a flag to enable or disable the TFTP server.
@@ -213,6 +228,19 @@ type ISO struct {
 	StaticIPAMEnabled bool
 }
 
+// OSIE holds configuration for the OSIE image service.
+type OSIE struct {
+	Enabled       bool
+	URLPrefix     string
+	ImagePath     string
+	OCIRegistry   string
+	OCIRepository string
+	OCIReference  string
+	OCIUsername   string
+	OCIPassword   string
+	PullTimeout   time.Duration
+}
+
 type TinkServer struct {
 	UseTLS      bool
 	InsecureTLS bool
@@ -221,6 +249,25 @@ type TinkServer struct {
 
 type TLS struct {
 	Certs []tls.Certificate
+}
+
+// DHCPInterface holds configuration for DHCP proxy interface management.
+// In proxy and auto-proxy modes the service automatically creates a macvlan
+// interface so it can receive broadcast DHCP packets from the host network.
+// When leader election is enabled, only the elected leader creates the interface,
+// aligning with the Kubernetes Service leader pod (e.g. Cilium L2 advertisements).
+type DHCPInterface struct {
+	// Enabled controls whether the DHCP proxy interface manager is active.
+	// When true, a macvlan interface is automatically created in proxy/auto-proxy
+	// mode so the service can receive broadcast DHCP packets.
+	Enabled bool
+	// EnableLeaderElection determines if leader election is enabled.
+	EnableLeaderElection bool
+	// LeaderElectionNamespace is the namespace for the leader election Lease resource.
+	// Defaults to "default" if empty.
+	LeaderElectionNamespace string
+	// RestConfig is the Kubernetes client config for leader election.
+	RestConfig *rest.Config
 }
 
 // NewConfig is a constructor for the Config struct. It will set default values for the Config struct.
@@ -271,6 +318,15 @@ func NewConfig(c Config, publicIP netip.Addr) *Config {
 			PatchMagicString:  "",
 			StaticIPAMEnabled: false,
 		},
+		OSIE: OSIE{
+			Enabled:       false,
+			URLPrefix:     OSIEURI,
+			ImagePath:     "/var/lib/hook",
+			OCIRegistry:   "ghcr.io",
+			OCIRepository: "tinkerbell/hook",
+			OCIReference:  "latest",
+			PullTimeout:   10 * time.Minute,
+		},
 		OTEL: OTEL{
 			Endpoint:         "",
 			InsecureEndpoint: false,
@@ -286,6 +342,7 @@ func NewConfig(c Config, publicIP netip.Addr) *Config {
 			BlockSize:  DefaultTFFTPBlockSize,
 			SinglePort: DefaultTFFTPSinglePort,
 			Timeout:    DefaultTFFTPTimeout,
+			Anticipate: DefaultTFFTPAnticipate,
 			Enabled:    true,
 		},
 		TinkServer: TinkServer{},
@@ -340,6 +397,40 @@ func (c *Config) ScriptHandler(log logr.Logger) http.Handler {
 	return jh.HandlerFunc()
 }
 
+// BinaryTFTPHandler returns a TFTP handler that serves iPXE binaries.
+// Returns nil if the iPXE HTTP binary server is disabled.
+func (c *Config) BinaryTFTPHandler(log logr.Logger) tftphandler.Handler {
+	if !c.IPXE.HTTPBinaryServer.Enabled {
+		return nil
+	}
+	bh := binary.Handler{Log: log, Patch: []byte(c.IPXE.EmbeddedScriptPatch)}
+	return tftphandler.HandlerFunc(bh.HandleTFTP)
+}
+
+// ScriptTFTPHandler returns a TFTP handler that serves iPXE/pxelinux scripts.
+// Returns nil if the iPXE HTTP script server is disabled.
+func (c *Config) ScriptTFTPHandler(log logr.Logger) tftphandler.Handler {
+	if !c.IPXE.HTTPScriptServer.Enabled {
+		return nil
+	}
+	jh := script.Handler{
+		Logger:                log,
+		Backend:               c.Backend,
+		OSIEURL:               c.IPXE.HTTPScriptServer.OSIEURL.String(),
+		ExtraKernelParams:     c.IPXE.HTTPScriptServer.ExtraKernelArgs,
+		PublicSyslogFQDN:      c.DHCP.SyslogIP.String(),
+		TinkServerTLS:         c.TinkServer.UseTLS,
+		TinkServerInsecureTLS: c.TinkServer.InsecureTLS,
+		TinkServerGRPCAddr:    c.TinkServer.AddrPort,
+		IPXEScriptRetries:     c.IPXE.HTTPScriptServer.Retries,
+		IPXEScriptRetryDelay:  c.IPXE.HTTPScriptServer.RetryDelay,
+		StaticIPXEEnabled:     (c.DHCP.Mode == DHCPModeAutoProxy),
+		KernelName:            c.IPXE.HTTPScriptServer.KernelName,
+		InitrdName:            c.IPXE.HTTPScriptServer.InitrdName,
+	}
+	return tftphandler.HandlerFunc(jh.HandleTFTP)
+}
+
 // ISOHandler returns an http.Handler that serves patched ISO images.
 // Returns nil, nil if the ISO server is disabled.
 func (c *Config) ISOHandler(log logr.Logger) (http.Handler, error) {
@@ -373,6 +464,57 @@ func (c *Config) ISOHandler(log logr.Logger) (http.Handler, error) {
 	return h, nil
 }
 
+// OSIEHandler returns an http.Handler that serves OSIE files from the filesystem.
+// Returns nil, nil if the OSIE service is disabled.
+func (c *Config) OSIEHandler(log logr.Logger) (http.Handler, error) {
+	if !c.OSIE.Enabled {
+		return nil, nil
+	}
+	oc := osie.NewConfig(
+		osie.WithURLPrefix(c.OSIE.URLPrefix),
+		osie.WithImagePath(c.OSIE.ImagePath),
+		osie.WithOCIRegistry(c.OSIE.OCIRegistry),
+		osie.WithOCIRepository(c.OSIE.OCIRepository),
+		osie.WithOCIReference(c.OSIE.OCIReference),
+		osie.WithOCIUsername(c.OSIE.OCIUsername),
+		osie.WithOCIPassword(c.OSIE.OCIPassword),
+		osie.WithPullTimeout(c.OSIE.PullTimeout),
+	)
+	return oc.Handler(log)
+}
+
+// OSIETFTPHandler returns a TFTP handler that serves OSIE files.
+// Returns nil if the OSIE service is disabled.
+func (c *Config) OSIETFTPHandler(log logr.Logger) tftphandler.Handler {
+	if !c.OSIE.Enabled {
+		return nil
+	}
+	oc := osie.NewConfig(
+		osie.WithURLPrefix(c.OSIE.URLPrefix),
+		osie.WithImagePath(c.OSIE.ImagePath),
+	)
+	return oc.TFTPHandler(log)
+}
+
+// OSIEStart starts the OSIE background service (OCI image pulling).
+// Returns nil if the OSIE service is disabled.
+func (c *Config) OSIEStart(ctx context.Context, log logr.Logger) error {
+	if !c.OSIE.Enabled {
+		return nil
+	}
+	oc := osie.NewConfig(
+		osie.WithURLPrefix(c.OSIE.URLPrefix),
+		osie.WithImagePath(c.OSIE.ImagePath),
+		osie.WithOCIRegistry(c.OSIE.OCIRegistry),
+		osie.WithOCIRepository(c.OSIE.OCIRepository),
+		osie.WithOCIReference(c.OSIE.OCIReference),
+		osie.WithOCIUsername(c.OSIE.OCIUsername),
+		osie.WithOCIPassword(c.OSIE.OCIPassword),
+		osie.WithPullTimeout(c.OSIE.PullTimeout),
+	)
+	return oc.Start(ctx, log)
+}
+
 // Start will run Smee non-HTTP services (DHCP, TFTP, syslog).
 // HTTP serving is handled externally by the HTTP server.
 func (c *Config) Start(ctx context.Context, log logr.Logger) error {
@@ -384,6 +526,27 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+
+	// ifReady is closed once the DHCP proxy interface is configured and ready to
+	// receive packets. The DHCP server goroutine blocks on this channel to
+	// guarantee the interface exists before binding, mirroring the init-container
+	// ordering guarantee from host-interface-config-map.yaml.
+	ifReady := make(chan struct{})
+
+	// DHCP proxy interface management (macvlan with optional leader election).
+	// Automatically enabled in proxy/auto-proxy mode when no explicit bind interface
+	// is configured. Privileges are verified upfront with a clear error if missing.
+	if c.DHCPInterface.Enabled && c.DHCP.BindInterface == "" {
+		if err := network.CheckNetworkPrivileges(); err != nil {
+			return err
+		}
+		g.Go(func() error {
+			return c.startDHCPInterface(ctx, log.WithName("dhcpif"), ifReady)
+		})
+	} else {
+		close(ifReady)
+	}
+
 	// syslog
 	if c.Syslog.Enabled {
 		addr := netip.AddrPortFrom(c.Syslog.BindAddr, c.Syslog.BindPort)
@@ -402,27 +565,6 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		})
 	}
 
-	// tftp
-	if c.TFTP.Enabled {
-		addrPort := netip.AddrPortFrom(c.TFTP.BindAddr, c.TFTP.BindPort)
-		if !addrPort.IsValid() {
-			return fmt.Errorf("invalid TFTP bind address: IP: %v, Port: %v", addrPort.Addr(), addrPort.Port())
-		}
-		tftpHandler := binary.TFTP{
-			Log:                  log,
-			EnableTFTPSinglePort: c.TFTP.SinglePort,
-			Addr:                 addrPort,
-			Timeout:              c.TFTP.Timeout,
-			Patch:                []byte(c.IPXE.EmbeddedScriptPatch),
-			BlockSize:            c.TFTP.BlockSize,
-		}
-
-		log.Info("starting tftp server", "bindAddr", addrPort.String())
-		g.Go(func() error {
-			return tftpHandler.ListenAndServe(ctx)
-		})
-	}
-
 	// dhcp serving
 	if c.DHCP.Enabled {
 		dh, err := c.dhcpHandler(log)
@@ -435,6 +577,14 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		}
 		log.Info("starting dhcp server", "bindAddr", dhcpAddrPort)
 		g.Go(func() error {
+			// Wait for the DHCP proxy interface to be ready before binding.
+			// This mirrors the init-container ordering guarantee: interface is
+			// fully configured before the DHCP server starts receiving packets.
+			select {
+			case <-ifReady:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			conn, err := server4.NewIPv4UDPConn(c.DHCP.BindInterface, net.UDPAddrFromAddrPort(dhcpAddrPort))
 			if err != nil {
 				return err
@@ -451,6 +601,45 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	}
 	log.Info("smee is shutting down", "reason", ctx.Err())
 	return nil
+}
+
+// startDHCPInterface manages the macvlan interface lifecycle for DHCP proxy mode.
+// When leader election is enabled, the interface is only created on the elected leader,
+// ensuring alignment with the Kubernetes Service leader pod (e.g. Cilium L2
+// advertisements). The ready channel is closed once the interface is configured so
+// the DHCP server can start binding.
+func (c *Config) startDHCPInterface(ctx context.Context, log logr.Logger, ready chan<- struct{}) error {
+	if c.DHCPInterface.EnableLeaderElection {
+		lm, err := network.NewLeaderManager(network.LeaderConfig{
+			RestConfig: c.DHCPInterface.RestConfig,
+			Namespace:  c.DHCPInterface.LeaderElectionNamespace,
+		}, log)
+		if err != nil {
+			return fmt.Errorf("creating leader-elected interface manager: %w", err)
+		}
+		defer lm.Close()
+		// For leader election the interface is set up asynchronously when leadership
+		// is acquired. Allow the DHCP server to start so it is ready to accept packets
+		// once the interface appears; it will not receive any until the macvlan is in place.
+		close(ready)
+		return lm.Start(ctx)
+	}
+
+	// No leader election: set up interface immediately, then signal ready.
+	ifMgr, err := network.NewNetworkManager(log)
+	if err != nil {
+		return fmt.Errorf("creating interface manager: %w", err)
+	}
+	defer ifMgr.Close()
+
+	if err := ifMgr.Setup(ctx); err != nil {
+		return fmt.Errorf("setting up DHCP proxy interface: %w", err)
+	}
+	// Interface is ready; allow the DHCP server to start.
+	close(ready)
+
+	<-ctx.Done()
+	return ifMgr.Cleanup()
 }
 
 func (c *Config) dhcpHandler(log logr.Logger) (server.Handler, error) {
@@ -613,5 +802,5 @@ func (c *Config) Transformer(typ reflect.Type) func(dst, src reflect.Value) erro
 }
 
 func (c *Config) noServicesEnabled() bool {
-	return !c.DHCP.Enabled && !c.TFTP.Enabled && !c.Syslog.Enabled && !c.ISO.Enabled && !c.IPXE.HTTPBinaryServer.Enabled && !c.IPXE.HTTPScriptServer.Enabled
+	return !c.DHCP.Enabled && !c.TFTP.Enabled && !c.ISO.Enabled && !c.Syslog.Enabled && !c.IPXE.HTTPBinaryServer.Enabled && !c.IPXE.HTTPScriptServer.Enabled
 }

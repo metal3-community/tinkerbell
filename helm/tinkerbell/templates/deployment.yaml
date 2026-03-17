@@ -11,17 +11,16 @@ kind: Deployment
 {{- end }}
 metadata:
   labels:
-    app: {{ .Values.name }}
-  name: {{ .Values.name }}
-  namespace: {{ .Release.Namespace | quote }}
+    {{- include "tinkerbell.labels" . | nindent 4 }}
+  name: {{ include "tinkerbell.fullname" . }}
+  namespace: {{ include "tinkerbell.namespace" . }}
 spec:
   {{- if not .Values.deployment.daemonSet.enabled }}
   replicas: {{ .Values.deployment.replicas }}
   {{- end }}
   selector:
     matchLabels:
-      app: {{ .Values.name }}
-      stack: tinkerbell
+      {{- include "tinkerbell.selectorLabels" . | nindent 6 }}
       {{- with .Values.deployment.selector }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
@@ -31,9 +30,13 @@ spec:
   {{- end }}
   template:
     metadata:
+      annotations:
+        {{- with .Values.deployment.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       labels:
         app: {{ .Values.name }}
-        stack: tinkerbell
+        {{- include "tinkerbell.selectorLabels" . | nindent 8 }}
         {{- with .Values.deployment.selector }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -46,240 +49,43 @@ spec:
           args:
             - {{ . }}
           {{- end }}
+          {{- if .Values.createConfigmap }}
+          envFrom:
+          - configMapRef:
+              name: {{ include "tinkerbell.fullname" . }}
+          {{- end }}
+          {{- if not (.Values.createConfigmap) }}
           env:
-          # FOR USE WITH hostNetwork: true (AUTO-CONFIGURATION)
-            {{- if .Values.deployment.hostNetwork }}
+            {{- include "tinkerbell.generateEnvVars" .Values.deployment.envs | nindent 12 }}
+          {{- end }}
+          {{- /* FOR USE WITH hostNetwork: true (AUTO-CONFIGURATION) */ -}}
+          {{- if .Values.deployment.hostNetwork -}}
+          {{- if .Values.createConfigmap }}
+          env:
+          {{- end }}
             - name: HOST_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.hostIP
-            {{- end }}
-          # RUFIO
-            - name: TINKERBELL_RUFIO_CONTROLLER_ENABLE_LEADER_ELECTION
-              value: {{ .Values.deployment.envs.rufio.enableLeaderElection | quote }}
-            - name: TINKERBELL_RUFIO_CONTROLLER_LEADER_ELECTION_NAMESPACE
-              value: {{ .Values.deployment.envs.rufio.leaderElectionNamespace | quote }}
-            - name: TINKERBELL_RUFIO_CONTROLLER_LOG_LEVEL
-              value: {{ .Values.deployment.envs.rufio.logLevel | quote }}
-            - name: TINKERBELL_RUFIO_BMC_CONNECT_TIMEOUT
-              value: {{ .Values.deployment.envs.rufio.bmcConnectTimeout | quote }}
-            - name: TINKERBELL_RUFIO_POWER_CHECK_INTERVAL
-              value: {{ .Values.deployment.envs.rufio.powerCheckInterval | quote }}
-            - name: TINKERBELL_RUFIO_MAX_CONCURRENT_RECONCILES
-              value: {{ .Values.deployment.envs.rufio.maxConcurrentReconciles | quote }}
-          # TINK CONTROLLER
-            - name: TINKERBELL_TINK_CONTROLLER_ENABLE_LEADER_ELECTION
-              value: {{ .Values.deployment.envs.tinkController.enableLeaderElection | quote }}
-            - name: TINKERBELL_TINK_CONTROLLER_LEADER_ELECTION_NAMESPACE
-              value: {{ .Values.deployment.envs.tinkController.leaderElectionNamespace | quote }}
-            - name: TINKERBELL_TINK_CONTROLLER_LOG_LEVEL
-              value: {{ .Values.deployment.envs.tinkController.logLevel | quote }}
-            - name: TINKERBELL_TINK_CONTROLLER_MAX_CONCURRENT_RECONCILES
-              value: {{ .Values.deployment.envs.tinkController.maxConcurrentReconciles | quote }}
-            - name: TINKERBELL_TINK_CONTROLLER_REFERENCE_ALLOW_LIST_RULES
-            {{- if .Values.deployment.envs.tinkController.referenceAllowListRules }}
-              value: {{ .Values.deployment.envs.tinkController.referenceAllowListRules | toJson | quote }}
-            {{- end }}
-            - name: TINKERBELL_TINK_CONTROLLER_REFERENCE_DENY_LIST_RULES
-            {{- if .Values.deployment.envs.tinkController.referenceDenyListRules }}
-              value: {{ .Values.deployment.envs.tinkController.referenceDenyListRules | toJson | quote }}
-            {{- end }}
-          # TINK SERVER
-            - name: TINKERBELL_TINK_SERVER_BIND_ADDR
-              value: {{ .Values.deployment.envs.tinkServer.bindAddr | quote }}
-            - name: TINKERBELL_TINK_SERVER_BIND_PORT
-              value: {{ .Values.deployment.envs.tinkServer.bindPort | quote }}
-            - name: TINKERBELL_TINK_SERVER_LOG_LEVEL
-              value: {{ .Values.deployment.envs.tinkServer.logLevel | quote }}
-            - name: TINKERBELL_TINK_SERVER_AUTO_ENROLLMENT_ENABLED
-              value: {{ .Values.deployment.envs.tinkServer.autoEnrollmentEnabled | quote }}
-            - name: TINKERBELL_TINK_SERVER_AUTO_DISCOVERY_ENABLED
-              value: {{ .Values.deployment.envs.tinkServer.autoDiscoveryEnabled | quote }}
-            - name: TINKERBELL_TINK_SERVER_AUTO_DISCOVERY_NAMESPACE
-              value: {{ coalesce .Values.deployment.envs.tinkServer.autoDiscoveryNamespace .Release.Namespace | quote }}
-            - name: TINKERBELL_TINK_SERVER_AUTO_DISCOVERY_AUTO_ENROLLMENT_ENABLED
-              value: {{ .Values.deployment.envs.tinkServer.autoDiscoveryAutoEnrollmentEnabled | quote }}
-          # TOOTLES
-            - name: TINKERBELL_TOOTLES_DEBUG_MODE
-              value: {{ .Values.deployment.envs.tootles.debugMode | quote }}
-            - name: TINKERBELL_TOOTLES_INSTANCE_ENDPOINT
-              value: {{ .Values.deployment.envs.tootles.instanceEndpoint | quote }}
-            - name: TINKERBELL_TOOTLES_LOG_LEVEL
-              value: {{ .Values.deployment.envs.tootles.logLevel | quote }}
-          # SMEE
-            - name: TINKERBELL_DHCP_ENABLED
-              value: {{ .Values.deployment.envs.smee.dhcpEnabled | quote }}
-            - name: TINKERBELL_DHCP_MODE
-              value: {{ .Values.deployment.envs.smee.dhcpMode | quote }}
-            - name: TINKERBELL_DHCP_BIND_ADDR
-              value: {{ .Values.deployment.envs.smee.dhcpBindAddr | quote }}
-            - name: TINKERBELL_DHCP_BIND_INTERFACE
-              value: {{ .Values.deployment.envs.smee.dhcpBindInterface | quote }}
-            - name: TINKERBELL_DHCP_IP_FOR_PACKET
-              value: {{ .Values.deployment.envs.smee.dhcpIPForPacket | quote }}
-            - name: TINKERBELL_DHCP_SYSLOG_IP
-              value: {{ .Values.deployment.envs.smee.dhcpSyslogIP | quote }}
-            - name: TINKERBELL_DHCP_TFTP_IP
-              value: {{ .Values.deployment.envs.smee.dhcpTftpIP | quote }}
-            - name: TINKERBELL_DHCP_TFTP_PORT
-              value: {{ .Values.deployment.envs.smee.dhcpTftpPort | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_SCRIPT_PREPEND_MAC
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptPrependMac | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_BINARY_SCHEME
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryScheme | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_BINARY_HOST
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryHost | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_BINARY_PORT
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryPort | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_BINARY_PATH
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpBinaryPath | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_SCRIPT_SCHEME
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptScheme | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_SCRIPT_HOST
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptHost | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_SCRIPT_PORT
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptPort | quote }}
-            - name: TINKERBELL_DHCP_IPXE_HTTP_SCRIPT_PATH
-              value: {{ .Values.deployment.envs.smee.dhcpIpxeHttpScriptPath | quote }}
-            - name: TINKERBELL_IPXE_BINARY_INJECT_MAC_ADDR_FORMAT
-              value: {{ .Values.deployment.envs.smee.ipxeBinaryInjectMacAddrFormat | quote }}
-            - name: TINKERBELL_IPXE_EMBEDDED_SCRIPT_PATCH
-              value: {{ .Values.deployment.envs.smee.ipxeEmbeddedScriptPatch | quote }}
-            - name: TINKERBELL_IPXE_HTTP_BINARY_ENABLED
-              value: {{ .Values.deployment.envs.smee.ipxeHttpBinaryEnabled | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_ENABLED
-              value: {{ .Values.deployment.envs.smee.ipxeHttpScriptEnabled | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_EXTRA_KERNEL_ARGS
-              value: {{ join " " ( append .Values.deployment.envs.smee.ipxeHttpScriptExtraKernelArgs ( printf "tink_worker_image=%s:%s" .Values.deployment.agentImage (coalesce .Values.deployment.agentImageTag .Chart.AppVersion) ) ) | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_KERNEL_NAME
-              value: {{ .Values.deployment.envs.smee.ipxeHttpScriptKernelName | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_INITRD_NAME
-              value: {{ .Values.deployment.envs.smee.ipxeHttpScriptInitrdName | quote }}
-            - name: TINKERBELL_IPXE_SCRIPT_TRUSTED_PROXIES
-              value: {{ coalesce .Values.deployment.envs.smee.ipxeHttpScriptTrustedProxies ( join "," $trustedProxies ) | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_RETRIES
-              value: {{ .Values.deployment.envs.smee.ipxeHttpScriptRetries | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_RETRY_DELAY
-              value: {{ .Values.deployment.envs.smee.ipxeHttpScriptRetryDelay | quote }}
-            - name: TINKERBELL_IPXE_HTTP_SCRIPT_OSIE_URL
-              value: {{ coalesce .Values.artifactsFileServer .Values.deployment.envs.smee.ipxeHttpScriptOsieURL | quote }}
-            - name: TINKERBELL_IPXE_OVERRIDE_ARCH_MAPPING
-              value: {{ .Values.deployment.envs.smee.ipxeOverrideArchMapping | quote }}
-            - name: TINKERBELL_IPXE_SCRIPT_TINK_SERVER_ADDR_PORT
-              value: {{ .Values.deployment.envs.smee.ipxeScriptTinkServerAddrPort | quote }}
-            - name: TINKERBELL_IPXE_SCRIPT_TINK_SERVER_USE_TLS
-              value: {{ .Values.deployment.envs.smee.ipxeScriptTinkServerUseTLS | quote }}
-            - name: TINKERBELL_IPXE_SCRIPT_TINK_SERVER_INSECURE_TLS
-              value: {{ .Values.deployment.envs.smee.ipxeScriptTinkServerInsecureTLS | quote }}
-            - name: TINKERBELL_ISO_ENABLED
-              value: {{ .Values.deployment.envs.smee.isoEnabled | quote }}
-            - name: TINKERBELL_ISO_UPSTREAM_URL
-              value: {{ .Values.deployment.envs.smee.isoUpstreamURL | quote }}
-            - name: TINKERBELL_ISO_PATCH_MAGIC_STRING
-              value: {{ .Values.deployment.envs.smee.isoPatchMagicString | quote }}
-            - name: TINKERBELL_ISO_STATIC_IPAM_ENABLED
-              value: {{ .Values.deployment.envs.smee.isoStaticIPAMEnabled | quote }}
-            - name: TINKERBELL_SMEE_LOG_LEVEL
-              value: {{ .Values.deployment.envs.smee.logLevel | quote }}
-            - name: TINKERBELL_SYSLOG_ENABLED
-              value: {{ .Values.deployment.envs.smee.syslogEnabled | quote }}
-            - name: TINKERBELL_SYSLOG_BIND_ADDR
-              value: {{ .Values.deployment.envs.smee.syslogBindAddr | quote }}
-            - name: TINKERBELL_SYSLOG_BIND_PORT
-              value: {{ .Values.deployment.envs.smee.syslogBindPort | quote }}
-            - name: TINKERBELL_TFTP_SERVER_ENABLED
-              value: {{ .Values.deployment.envs.smee.tftpServerEnabled | quote }}
-            - name: TINKERBELL_TFTP_SERVER_BIND_ADDR
-              value: {{ .Values.deployment.envs.smee.tftpServerBindAddr | quote }}
-            - name: TINKERBELL_TFTP_SERVER_BIND_PORT
-              value: {{ .Values.deployment.envs.smee.tftpServerBindPort | quote }}
-            - name: TINKERBELL_TFTP_TIMEOUT
-              value: {{ .Values.deployment.envs.smee.tftpTimeout | quote }}
-            - name: TINKERBELL_TFTP_BLOCK_SIZE
-              value: {{ .Values.deployment.envs.smee.tftpBlockSize | quote }}
-            - name: TINKERBELL_TFTP_SINGLE_PORT
-              value: {{ .Values.deployment.envs.smee.tftpSinglePort | quote }}
-          # SECONDSTAR
-            - name: TINKERBELL_SECONDSTAR_PORT
-              value: {{ .Values.deployment.envs.secondstar.bindPort | quote }}
-            - name: TINKERBELL_SECONDSTAR_HOST_KEY
-              value: {{ .Values.deployment.envs.secondstar.hostKeyPath | quote }}
-            - name: TINKERBELL_SECONDSTAR_IPMITOOL_PATH
-              value: {{ .Values.deployment.envs.secondstar.ipmitoolPath | quote }}
-            - name: TINKERBELL_SECONDSTAR_IDLE_TIMEOUT
-              value: {{ .Values.deployment.envs.secondstar.idleTimeout | quote }}
-            - name: TINKERBELL_SECONDSTAR_LOG_LEVEL
-              value: {{ .Values.deployment.envs.secondstar.logLevel | quote }}
-          # UI
-            - name: TINKERBELL_UI_DEBUG_MODE
-              value: {{ .Values.deployment.envs.ui.debugMode | quote }}
-            - name: TINKERBELL_UI_ENABLE_AUTO_LOGIN
-              value: {{ .Values.deployment.envs.ui.enableAutoLogin | quote }}
-            - name: TINKERBELL_UI_LOG_LEVEL
-              value: {{ .Values.deployment.envs.ui.logLevel | quote }}
-            - name: TINKERBELL_UI_URL_PREFIX
-              value: {{ .Values.deployment.envs.ui.urlPrefix | quote }}
-          # GLOBALS
-            - name: TINKERBELL_LOG_LEVEL
-              value: {{ .Values.deployment.envs.globals.logLevel | quote }}
-            - name: TINKERBELL_BACKEND
-              value: {{ .Values.deployment.envs.globals.backend | quote }}
-            - name: TINKERBELL_BACKEND_FILE_PATH
-              value: {{ .Values.deployment.envs.globals.backendFilePath | quote }}
-            - name: TINKERBELL_BACKEND_KUBE_BURST
-              value: {{ .Values.deployment.envs.globals.backendKubeBurst | quote }}
-            - name: TINKERBELL_BACKEND_KUBE_CONFIG
-              value: {{ .Values.deployment.envs.globals.backendKubeConfig | quote }}
-            - name: TINKERBELL_BACKEND_KUBE_NAMESPACE
-              value: {{ .Values.deployment.envs.globals.backendKubeNamespace | quote }}
-            - name: TINKERBELL_BACKEND_KUBE_QPS
-              value: {{ .Values.deployment.envs.globals.backendKubeQPS | quote }}
-            - name: TINKERBELL_BIND_ADDR
-              value: {{ .Values.deployment.envs.globals.bindAddr | quote }}
-            - name: TINKERBELL_OTEL_ENDPOINT
-              value: {{ .Values.deployment.envs.globals.otelEndpoint | quote }}
-            - name: TINKERBELL_OTEL_INSECURE
-              value: {{ .Values.deployment.envs.globals.otelInsecure | quote }}
-            - name: TINKERBELL_TRUSTED_PROXIES
-              value: {{ ( join "," $trustedProxies ) | quote }}
-            - name: TINKERBELL_PUBLIC_IPV4
-              value: {{ (coalesce .Values.deployment.envs.globals.publicIpv4 $publicIP) | quote }}
-            - name: TINKERBELL_ENABLE_SMEE
-              value: {{ .Values.deployment.envs.globals.enableSmee | quote }}
-            - name: TINKERBELL_ENABLE_TOOTLES
-              value: {{ .Values.deployment.envs.globals.enableTootles | quote }}
-            - name: TINKERBELL_ENABLE_TINK_SERVER
-              value: {{ .Values.deployment.envs.globals.enableTinkServer | quote }}
-            - name: TINKERBELL_ENABLE_TINK_CONTROLLER
-              value: {{ .Values.deployment.envs.globals.enableTinkController | quote }}
-            - name: TINKERBELL_ENABLE_RUFIO_CONTROLLER
-              value: {{ .Values.deployment.envs.globals.enableRufioController | quote }}
-            - name: TINKERBELL_ENABLE_SECONDSTAR
-              value: {{ .Values.deployment.envs.globals.enableSecondstar | quote }}
-            - name: TINKERBELL_ENABLE_UI
-              value: {{ .Values.deployment.envs.globals.enableUI | quote }}
-            - name: TINKERBELL_ENABLE_CRD_MIGRATIONS
-              value: {{ .Values.deployment.envs.globals.enableCRDMigrations | quote }}
-            - name: TINKERBELL_TLS_CERT_FILE
-              value: {{ .Values.deployment.envs.globals.tlsCertFile | quote }}
-            - name: TINKERBELL_TLS_KEY_FILE
-              value: {{ .Values.deployment.envs.globals.tlsKeyFile | quote }}
-            - name: TINKERBELL_HTTP_PORT
-              value: {{ .Values.deployment.envs.globals.httpPort | quote }}
-            - name: TINKERBELL_HTTPS_PORT
-              value: {{ .Values.deployment.envs.globals.httpsPort | quote }}
+          {{- end }}
+            {{- /* Additional environment variables */}}
             {{- with .Values.deployment.additionalEnvs }}
-          # Additional environment variables
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
+            {{- /* This is always enabled because /metrics and /healthcheck are always enabled */}}
+            - containerPort: {{ .Values.deployment.envs.globals.httpPort }}
+            {{- with .Values.service.ports.http }}
+              name: {{ .name }}
+              protocol: {{ .protocol }}
+            {{- end }}
           {{- if .Values.deployment.envs.globals.enableSmee }}
-            - containerPort: {{ .Values.deployment.envs.smee.tftpServerBindPort }}
+            - containerPort: {{ .Values.deployment.envs.tftp.serverBindPort }}
             {{- with .Values.service.ports.tftp }}
               name: {{ .name }}
               protocol: {{ .protocol }}
             {{- end }}
-            - containerPort: {{ .Values.deployment.envs.smee.syslogBindPort }}
+            - containerPort: {{ .Values.deployment.envs.syslog.bindPort }}
             {{- with .Values.service.ports.syslog }}
               name: {{ .name }}
               protocol: {{ .protocol }}
@@ -290,11 +96,6 @@ spec:
               protocol: {{ .protocol }}
             {{- end }}
           {{- end }}
-            - containerPort: {{ .Values.deployment.envs.globals.httpPort }} # This is always enabled because /metrics and /healthcheck are always enabled.
-            {{- with .Values.service.ports.http }}
-              name: {{ .name }}
-              protocol: {{ .protocol }}
-            {{- end }}
           {{- if .Values.deployment.envs.globals.enableTinkServer }}
             - containerPort: {{ .Values.deployment.envs.tinkServer.bindPort }}
             {{- with .Values.service.ports.grpc }}
@@ -303,7 +104,7 @@ spec:
             {{- end }}
           {{- end }}
           {{- if .Values.deployment.envs.globals.enableSecondstar }}
-            - containerPort: {{ .Values.deployment.envs.secondstar.bindPort }}
+            - containerPort: {{ .Values.deployment.envs.secondstar.port }}
             {{- with .Values.service.ports.ssh }}
               name: {{ .name }}
               protocol: {{ .protocol }}
@@ -317,16 +118,62 @@ spec:
             {{- end }}
           {{- end }}
           resources: {{ toYaml .Values.deployment.resources | nindent 12 }}
+          {{- if and .Values.deployment.probes.liveness.enabled .Values.deployment.envs.globals.enableSmee }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.deployment.probes.liveness.httpGet.path }}
+              port: {{ .Values.deployment.probes.liveness.httpGet.port }}
+              scheme: {{ .Values.deployment.probes.liveness.httpGet.scheme }}
+            initialDelaySeconds: {{ .Values.deployment.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.deployment.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.deployment.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.deployment.probes.liveness.failureThreshold }}
+            successThreshold: {{ .Values.deployment.probes.liveness.successThreshold }}
+          {{- end }}
+          {{- if and .Values.deployment.probes.readiness.enabled .Values.deployment.envs.globals.enableSmee }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.deployment.probes.readiness.httpGet.path }}
+              port: {{ .Values.deployment.probes.readiness.httpGet.port }}
+              scheme: {{ .Values.deployment.probes.readiness.httpGet.scheme }}
+            initialDelaySeconds: {{ .Values.deployment.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.deployment.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.deployment.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.deployment.probes.readiness.failureThreshold }}
+            successThreshold: {{ .Values.deployment.probes.readiness.successThreshold }}
+          {{- end }}
+          {{- if and .Values.deployment.probes.startup.enabled .Values.deployment.envs.globals.enableSmee }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.deployment.probes.startup.httpGet.path }}
+              port: {{ .Values.deployment.probes.startup.httpGet.port }}
+              scheme: {{ .Values.deployment.probes.startup.httpGet.scheme }}
+            initialDelaySeconds: {{ .Values.deployment.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.deployment.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.deployment.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.deployment.probes.startup.failureThreshold }}
+            successThreshold: {{ .Values.deployment.probes.startup.successThreshold }}
+          {{- end }}
           securityContext:
+            {{- if or .Values.deployment.envs.dhcpInterface.enabled .Values.deployment.init.enabled }}
+            privileged: true
+            {{- end }}
             capabilities:
               add:
                 - NET_RAW
+                {{- if or .Values.deployment.envs.dhcpInterface.enabled (eq .Values.deployment.envs.dhcpInterface.type "ebpf") }}
+                - NET_ADMIN
+                {{- end }}
+                {{- if eq .Values.deployment.envs.dhcpInterface.type "ebpf" }}
+                - SYS_ADMIN
+                - BPF
+                {{- end }}
           {{- with .Values.deployment.volumeMounts }}
           volumeMounts:
           {{- toYaml . | nindent 10 }}
           {{- end }}
       hostNetwork: {{ .Values.deployment.hostNetwork }}
-      serviceAccountName: {{ .Values.rbac.name }}-service-account
+      serviceAccountName: {{ include "tinkerbell.serviceAccountName" . }}
       volumes:
       {{- if .Values.deployment.init.enabled }}
       - name: script
@@ -349,7 +196,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.deployment.init.enabled }}
+      {{- if or .Values.deployment.init.enabled .Values.deployment.envs.dhcpInterface.enabled (eq .Values.deployment.envs.dhcpInterface.type "ebpf") }}
       hostPID: true
       {{- end }}
       {{- if .Values.deployment.init.enabled }}

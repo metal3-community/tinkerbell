@@ -61,7 +61,7 @@ deployment:
       ipmitoolPath: "/usr/sbin/ipmitool"
       idleTimeout: "15m"
       logLevel: 0
-    hook:
+    osie:
       debugMode: false
       logLevel: 0
     dhcp:
@@ -92,8 +92,8 @@ deployment:
       httpScriptBindAddr: ""
       httpScriptEnabled: true
       httpScriptExtraKernelArgs: [] # Additional kernel arguments to pass to the OSIE. (k=v k=v) that are appended to the kernel cmdline in the iPXE script
-      httpScriptInitrdName: "initramfs" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
-      httpScriptKernelName: "vmlinuz" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
+      httpScriptInitrdName: "initramfs-6.18.16" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
+      httpScriptKernelName: "vmlinuz-6.18.16" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
       httpScriptOsieUrl: ""
       httpScriptRetries: 1
       httpScriptRetryDelay: 1
@@ -218,14 +218,21 @@ deployment:
       successThreshold: 1
   tolerations: []
   # Additional volumes on the output Deployment definition.
-  volumes: []
+  volumes:
+    - name: captain-artifacts
+      image:
+        reference: ghcr.io/tinkerbell/captain/artifacts:v0.1.0
+        pullPolicy: PullIfNotPresent
+
   # - name: foo
   #   secret:
   #     secretName: mysecret
   #     optional: false
 
   # Additional volumeMounts on the output Deployment definition.
-  volumeMounts: []
+  volumeMounts:
+    - name: captain-artifacts
+      mountPath: /captain
   # - name: foo
   #   mountPath: "/etc/foo"
   #   subPath: "foo"

@@ -27,7 +27,6 @@ type GlobalConfig struct {
 	EnableTinkController bool
 	EnableRufio          bool
 	EnableSecondStar     bool
-	EnableOSIE           bool
 	EnableUI             bool
 	EnableCRDMigrations  bool
 	MaxprocsEnable       bool
@@ -73,7 +72,6 @@ func RegisterGlobal(fs *Set, gc *GlobalConfig) {
 	fs.Register(EnableTinkController, ffval.NewValueDefault(&gc.EnableTinkController, gc.EnableTinkController))
 	fs.Register(EnableRufioController, ffval.NewValueDefault(&gc.EnableRufio, gc.EnableRufio))
 	fs.Register(EnableSecondStar, ffval.NewValueDefault(&gc.EnableSecondStar, gc.EnableSecondStar))
-	fs.Register(EnableOSIE, ffval.NewValueDefault(&gc.EnableOSIE, gc.EnableOSIE))
 	fs.Register(EnableUI, ffval.NewValueDefault(&gc.EnableUI, gc.EnableUI))
 	fs.Register(EnableCRDMigrations, ffval.NewValueDefault(&gc.EnableCRDMigrations, gc.EnableCRDMigrations))
 	fs.Register(LogLevelConfig, ffval.NewValueDefault(&gc.LogLevel, gc.LogLevel))
@@ -207,11 +205,6 @@ var EnableKubeAPIServer = Config{
 var EnableETCD = Config{
 	Name:  "enable-embedded-etcd",
 	Usage: "enables the embedded etcd",
-}
-
-var EnableOSIE = Config{
-	Name:  "enable-osie",
-	Usage: "enable OSIE service",
 }
 
 var EnableCRDMigrations = Config{

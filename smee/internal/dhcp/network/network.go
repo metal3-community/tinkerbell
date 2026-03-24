@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/klog/v2"
 )
 
 // interfaceType represents the type of virtual network interface.
@@ -38,9 +39,12 @@ const (
 	dhcpIfAddr = "127.1.1.1/32"
 
 	// Leader election defaults — not user-configurable.
-	defaultLeaseDuration = 15 * time.Second
-	defaultRenewDeadline = 10 * time.Second
-	defaultRetryPeriod   = 2 * time.Second
+	// These are deliberately longer than the controller-runtime defaults (15s/10s/2s)
+	// because the DHCP interface lifecycle is expensive to flap and the embedded
+	// API server may be slow to respond during multi-component startup.
+	defaultLeaseDuration = 30 * time.Second
+	defaultRenewDeadline = 20 * time.Second
+	defaultRetryPeriod   = 5 * time.Second
 	defaultLockName      = "smee-dhcp-interface"
 	defaultNamespace     = "default"
 	// defaultIfaceType is the default interface type when none is specified.
@@ -619,6 +623,10 @@ func newLeaderManagerWithTimings(cfg LeaderConfig, lockName, identity string, le
 // Start runs the leader election loop. It blocks until ctx is cancelled.
 func (lm *LeaderManager) Start(ctx context.Context) error {
 	lm.log.Info("starting leader election for DHCP proxy interface")
+	// Inject our logger into the context so client-go's leader election uses it
+	// instead of the global klog logger (which may be overwritten by other
+	// controllers like rufio or tink-controller that call klog.SetLogger globally).
+	ctx = klog.NewContext(ctx, lm.log)
 	lm.elector.Run(ctx)
 	return nil
 }

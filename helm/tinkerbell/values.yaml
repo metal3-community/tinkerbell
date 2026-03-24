@@ -1,9 +1,6 @@
 # TRUSTED_PROXIES=$(kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}' | tr ' ' ',')
-# LB_IP=192.168.2.116
-# the ARTIFACTS_FILE_SERVER is used to set the load balancer IP for the HookOS/nginx service object and will be used to configure TINKERBELL_IPXE_HTTP_SCRIPT_OSIE_URL in the Tinkerbell deployment.
-# ARTIFACTS_FILE_SERVER=http://192.168.2.117:7173
-# helm install tinkerbell tinkerbell/ --create-namespace --namespace tinkerbell --wait --set "trustedProxies={${TRUSTED_PROXIES}}" --set "publicIP=$LB_IP" --set "artifactsFileServer=$ARTIFACTS_FILE_SERVER" --set "deployment.agentImageTag=latest" --set "deployment.imageTag=latest"
-artifactsFileServer:
+# LB_IP=192.168.2.116=
+# helm install tinkerbell tinkerbell/ --create-namespace --namespace tinkerbell --wait --set "trustedProxies={${TRUSTED_PROXIES}}" --set "publicIP=$LB_IP" --set "deployment.agentImageTag=latest" --set "deployment.imageTag=latest"
 deployment:
   additionalEnvs: []
   # - name: MY_ENV_VAR
@@ -31,7 +28,6 @@ deployment:
       enableCRDMigrations: true
       enableRufioController: true
       enableSecondstar: true
-      enableOsie: true
       enableSmee: true
       enableTootles: true
       enableTinkServer: true
@@ -151,6 +147,7 @@ deployment:
   hostNetwork: false
   image: ghcr.io/tinkerbell/tinkerbell
   imagePullPolicy: IfNotPresent
+  initContainers: []
   # imageTag is here as a placeholder and to show its possible to be set.
   # It is not set because in the deployment.yaml a coalesce is used with this value
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
@@ -307,27 +304,6 @@ optional:
   migration:
     enabled: false
 
-  # osie (Operating System Installation Environment) objects are shared across HookOS and CaptainOS.
-  # They handle the file server for serving Artifacts.
-  osie:
-    deployment:
-      strategy:
-        type: RollingUpdate
-    hostNetwork: false
-    image: nginx:1.29.5
-    name: hookos # this value is deprecated and will be updated to "osie" in a future release.
-    nodeSelector: {}
-    tolerations: []
-    port: 7173
-    selector:
-      app: hookos # this value is deprecated and will be updated to "osie" in a future release.
-    service:
-      annotations: {}
-      lbClass: "kube-vip.io/kube-vip-class"
-      loadBalancerIP: ""
-      type: LoadBalancer
-    affinity: {}
-
   # captainos objects enable downloading and serving CaptainOS artifacts.
   # Optional, disabled by default.
   # Can be enabled together with hookos.
@@ -335,50 +311,6 @@ optional:
     enabled: false
     image: ghcr.io/tinkerbell/captain/artifacts:v0.1.0
     pullPolicy: IfNotPresent
-
-  # hookos objects enable downloading and serving HookOS artifacts.
-  # Optional, enabled by default.
-  hookos:
-    arch: both # x86_64, aarch64, both
-    # downloadURL only works with the > 0.8.1 Hook release because
-    # previous Hook versions didn't provide a checksum file.
-    downloadURL: https://github.com/tinkerbell/hook/releases/download/v0.11.1
-    enabled: false
-    extension: tar.gz # iso, tar.gz, both
-    kernelVersion: both # 5.10, 6.6, both
-    persistence:
-      # If existingClaim is set, the local persistence volume (localPersistentVolume) objects will NOT be created.
-      # Use this to point to an existing production grade storage class.
-      existingClaim: ""
-      # While local storage is the default, it is not recommended for production use.
-      localPersistentVolume:
-        accessModes:
-          - ReadWriteMany
-        extraLabels: {}
-        name: hook-artifacts
-        # this path must already exist on the node
-        path: /tmp
-        size: 2Gi
-        storageClassName: local-storage
-    scriptImage: bash:5.2.37
-    # the following are deprecated under optional.hookos. Set these values via optional.osie.
-    deployment:
-      strategy:
-        type:
-    hostNetwork:
-    image:
-    name:
-    nodeSelector: {}
-    tolerations: []
-    port:
-    selector:
-      app:
-    service:
-      annotations: {}
-      lbClass:
-      loadBalancerIP:
-      type:
-    affinity: {}
 
   # kubevip objects are used to provide a LoadBalancer IP for the Tinkerbell services.
   # Optional, enabled by default.

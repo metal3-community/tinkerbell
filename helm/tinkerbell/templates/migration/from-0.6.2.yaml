@@ -1,5 +1,4 @@
 {{- if .Values.optional.migration.enabled -}}
-artifactsFileServer: {{ .Values.artifactsFileServer }}
 deployment:
   additionalEnvs: {{ .Values.deployment.additionalEnvs | toYaml | nindent 4 }}
   additionalArgs: {{ .Values.deployment.additionalArgs | toYaml | nindent 4 }}

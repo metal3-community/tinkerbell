@@ -185,11 +185,11 @@ helm-publish: out/helm/tinkerbell-$(VERSION).tgz ## Publish the Helm chart
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart
-	helm lint helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" --set "artifactsFileServer=http://2.2.2.2"
+	helm lint helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1""
 
 .PHONY: helm-template
 helm-template: ## Helm template for Tinkerbell
-	helm template test helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" --set "artifactsFileServer=http://2.2.2.2" 2>&1 >/dev/null
+	helm template test helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" 2>&1 >/dev/null
 
 ######### Helm charts - end   #########
 

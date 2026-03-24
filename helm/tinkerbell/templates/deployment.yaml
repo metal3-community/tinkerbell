@@ -200,13 +200,10 @@ spec:
       hostPID: true
       {{- end }}
       {{- if .Values.deployment.init.enabled }}
+      {{- range .Values.deployment.initContainers }}
       initContainers:
-      - name: broadcast-interface
-        image: {{ .Values.deployment.init.image }}
-        command: ["/script/host_interface.sh", "-s", "{{ $sourceInterface }}", "-t", "{{ $dhcpInterfaceType }}"]
-        volumeMounts:
-            - name: script
-              mountPath: "/script"
+        - {{ . | toYaml | nindent 10 }}
+      {{- end }}
         securityContext:
           privileged: true
       {{- end }}

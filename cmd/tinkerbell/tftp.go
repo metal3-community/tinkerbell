@@ -38,7 +38,7 @@ func startTFTPServer(ctx context.Context, globals *flag.GlobalConfig, s *flag.Sm
 	mux := routeList.Mux(tftpLog)
 
 	// OSIE TFTP handler (serves OSIE files as the default/fallback handler)
-	if globals.EnableOSIE {
+	if s.Config.OSIE.Enabled {
 		mux.SetDefaultHandler(s.Config.OSIETFTPHandler(tftpLog.WithName("osie")))
 	}
 

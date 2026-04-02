@@ -124,38 +124,10 @@ ci-checks: $(GOIMPORTS_FQP) ./script/ci-checks.sh ## Run the ci-checks.sh script
 .PHONY: ci
 ci: ci-checks coverage lint vet ## Runs all the same validations and tests that run in CI
 
-# Include UI Makefile
-include ui/Makefile
-
-# Run go generate
-generated_go_files := \
-		smee/internal/syslog/facility_string.go \
-		smee/internal/syslog/severity_string.go \
-
-generate-go: $(generated_go_files) ## Run Go's generate command
-smee/internal/syslog/facility_string.go: smee/internal/syslog/message.go
-smee/internal/syslog/severity_string.go: smee/internal/syslog/message.go
-	go generate -run=".*_string.go" ./...
-	$(GOIMPORTS) -w .
-
-.PHONY: generate-proto
-generate-proto: $(BUF) ## Generate code from proto files.
-	$(BUF) generate
-	$(MAKE) fmt
-
-# Kubernetes CRD generation
-.PHONY: manifests
-manifests: ## Generate WebhookConfiguration and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) crd webhook paths="./..." output:crd:artifacts:config=crd/bases
-	$(MAKE) fmt
-
 .PHONY: generate
 generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	$(CONTROLLER_GEN) object:headerFile="script/boilerplate.go.txt" paths="./..."
-	$(MAKE) fmt
-
-.PHONY: generate-all
-generate-all: generate generate-proto generate-go ui-generate manifests ## Run all code generation steps
+	go generate ./...
+	golangci-lint fmt ./...
 
 .PHONY: dep-graph
 dep-graph: ## Generate a dependency graph
@@ -267,11 +239,11 @@ FIXERS :=
 GOLANGCI_LINT_CONFIG := $(LINT_ROOT)/.golangci.yml
 LINTERS += golangci-lint-lint
 golangci-lint-lint: $(GOLANGCI_LINT)
-	find . -name go.mod -not -path "./out/*" -execdir sh -c '"$(GOLANGCI_LINT)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'
+	find $(PWD) -name go.mod -not -path "./out/*" -execdir sh -c '"$(GOLANGCI_LINT)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'
 
 FIXERS += golangci-lint-fix
 golangci-lint-fix: $(GOLANGCI_LINT)
-	find . -name go.mod -not -path "./out/*" -execdir "$(GOLANGCI_LINT)" run -c "$(GOLANGCI_LINT_CONFIG)" --fix \;
+	find $(PWD) -name go.mod -not -path "./out/*" -execdir "$(GOLANGCI_LINT)" run -c "$(GOLANGCI_LINT_CONFIG)" --fix \;
 
 .PHONY: _lint $(LINTERS)
 _lint: $(LINTERS)

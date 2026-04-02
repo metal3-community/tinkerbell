@@ -10,6 +10,7 @@ import (
 
 //go:generate go tool controller-gen crd webhook paths="../../..." output:crd:artifacts:config=../../crd/bases
 //go:generate go tool controller-gen object:headerFile="../../script/boilerplate.go.txt" paths="./..."
+//go:generate go tool buf generate ../.. --config ../../buf.yaml --template ../../buf.gen.yaml --output ../../
 func main() {
 	ctx, done := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
 

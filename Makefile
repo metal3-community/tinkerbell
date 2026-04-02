@@ -147,7 +147,7 @@ helm-publish: out/helm/tinkerbell-$(VERSION).tgz ## Publish the Helm chart
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart
-	helm lint helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1""
+	helm lint helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1"
 
 .PHONY: helm-template
 helm-template: ## Helm template for Tinkerbell

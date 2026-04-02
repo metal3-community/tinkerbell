@@ -29,6 +29,7 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           args: --timeout=10m
+          version-file: .tool-versions
 
   generate:
     runs-on: ubuntu-latest
@@ -45,15 +46,17 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           install-only: true
+          version-file: .tool-versions
 
-      - uses: bufbuild/buf-action@v1
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          setup_only: true
+          bun-version-file: .tool-versions
 
-      - name: Generate Protobuf code
-        run: buf generate
+      - name: Run go mod tidy
+        run: go mod tidy
 
-      - name: Generate controller manifests
+      - name: Generate code and format
         run: |
           go generate ./...
           golangci-lint fmt ./...
@@ -75,21 +78,21 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - uses: actions/cache@v4
-        with:
-          path: bin
-          key: ${{ runner.os }}-tools-bin-${{ hashFiles('Makefile') }}
-          restore-keys: |
-            ${{ runner.os }}-tools-bin-
-
-      - name: Generate UI assets
-        run: make ui-generate
-
-      - name: Generate UI assets
-        run: make ui-generate
-
       - name: Run all CI checks, linting, tests, etc
         run: make ci TEST_ARGS="-count=1"
+
+      - name: Generate HTML coverage report
+        if: always()
+        run: go tool cover -html=coverage.txt -o coverage.html
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.txt
+            coverage.html
 
       - name: upload to codecov
         uses: codecov/codecov-action@v5

@@ -3,6 +3,8 @@ package assets
 
 import "embed"
 
+//go:generate bunx --bun -p tailwindcss -p @tailwindcss/cli tailwindcss -i css/input.css -o css/output.css --minify
+
 // Artwork contains embedded artwork files (logos, icons).
 //
 //go:embed artwork/*

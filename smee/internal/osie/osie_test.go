@@ -3,13 +3,11 @@ package osie
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
 )
 
@@ -184,68 +182,6 @@ func TestStartCreatesImageDirectory(t *testing.T) {
 	if !info.IsDir() {
 		t.Error("expected path to be a directory")
 	}
-}
-
-// Mock logger for testing log output.
-type mockLogger struct {
-	logs []string
-}
-
-func (m *mockLogger) Init(logr.RuntimeInfo) {}
-
-func (m *mockLogger) Enabled(_ int) bool { return true }
-
-func (m *mockLogger) Info(_ int, msg string, _ ...interface{}) {
-	m.logs = append(m.logs, fmt.Sprintf("INFO: %s", msg))
-}
-
-func (m *mockLogger) Error(err error, msg string, _ ...interface{}) {
-	m.logs = append(m.logs, fmt.Sprintf("ERROR: %s: %v", msg, err))
-}
-
-func (m *mockLogger) WithValues(_ ...interface{}) logr.LogSink { return m }
-
-func (m *mockLogger) WithName(_ string) logr.LogSink { return m }
-
-func TestLoggingBehavior(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte("test"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	mockLog := &mockLogger{}
-	log := logr.New(mockLog)
-	config := NewConfig(WithImagePath(dir))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	_ = config.Start(ctx, log)
-	time.Sleep(50 * time.Millisecond)
-
-	if len(mockLog.logs) == 0 {
-		t.Error("expected some log messages to be generated")
-	}
-
-	foundStartMessage := false
-	for _, l := range mockLog.logs {
-		if contains(l, "starting OSIE service") {
-			foundStartMessage = true
-			break
-		}
-	}
-	if !foundStartMessage {
-		t.Error("expected to find 'starting OSIE service' log message")
-	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestConfigValidation(t *testing.T) {

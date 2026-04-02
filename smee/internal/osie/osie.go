@@ -34,8 +34,8 @@ var (
 	serialOrMacPattern = regexp.MustCompile(`^(([0-9a-fA-F]{2}[-]?){4,6})/{1,2}(.+)$`)
 )
 
-// Config holds the configuration for the OSIE service.
-type Config struct {
+// Handler holds the configuration for the OSIE service.
+type Handler struct {
 	DebugMode bool
 	URLPrefix string
 	// ImagePath is the directory where OSIE images are stored.
@@ -55,59 +55,59 @@ type Config struct {
 }
 
 // Option functions for configuring the OSIE service.
-type Option func(*Config)
+type Option func(*Handler)
 
 func WithURLPrefix(prefix string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.URLPrefix = prefix
 	}
 }
 
 func WithImagePath(path string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.ImagePath = path
 	}
 }
 
 func WithOCIRegistry(registry string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.OCIRegistry = registry
 	}
 }
 
 func WithOCIRepository(repository string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.OCIRepository = repository
 	}
 }
 
 func WithOCIReference(reference string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.OCIReference = reference
 	}
 }
 
 func WithPullTimeout(timeout time.Duration) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.PullTimeout = timeout
 	}
 }
 
 func WithOCIUsername(username string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.OCIUsername = username
 	}
 }
 
 func WithOCIPassword(password string) Option {
-	return func(c *Config) {
+	return func(c *Handler) {
 		c.OCIPassword = password
 	}
 }
 
 // NewConfig creates a new OSIE service configuration with defaults.
-func NewConfig(opts ...Option) *Config {
-	defaults := &Config{
+func NewConfig(opts ...Option) *Handler {
+	defaults := &Handler{
 		DebugMode:     false,
 		URLPrefix:     DefaultURLPrefix,
 		ImagePath:     defaultImagePath,
@@ -125,7 +125,7 @@ func NewConfig(opts ...Option) *Config {
 // Start initializes and starts the OSIE image puller service.
 // It creates an images.Puller that periodically checks whether the image directory
 // has files and, if not, pulls the configured OCI image in the background.
-func (c *Config) Start(ctx context.Context, log logr.Logger) error {
+func (c *Handler) Start(ctx context.Context, log logr.Logger) error {
 	log.Info("starting OSIE service")
 
 	_, err := images.NewPuller(ctx, log,
@@ -145,15 +145,15 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	return nil
 }
 
-// Handler returns an http.Handler that serves OSIE files from the filesystem.
+// Handle returns an http.Handle that serves OSIE files from the filesystem.
 // It strips the URLPrefix from incoming request paths so the FileServer resolves
 // files relative to ImagePath (e.g. /images/vmlinuz-x86_64 -> <ImagePath>/vmlinuz-x86_64).
-func (c *Config) Handler(log logr.Logger) (http.Handler, error) {
+func (c *Handler) Handle() (http.Handler, error) {
 	return http.StripPrefix(c.URLPrefix, http.FileServerFS(os.DirFS(c.ImagePath))), nil
 }
 
 // TFTPHandler returns a TFTP handler that serves OSIE files from the filesystem.
-func (c *Config) TFTPHandler(log logr.Logger) handler.Handler {
+func (c *Handler) TFTPHandler(log logr.Logger) handler.Handler {
 	return &tftpHandler{
 		log:      log,
 		cacheDir: c.ImagePath,

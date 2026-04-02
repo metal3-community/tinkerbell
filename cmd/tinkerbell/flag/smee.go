@@ -540,5 +540,3 @@ var DHCPInterfaceEnabled = Config{
 	Name:  "dhcp-interface-enabled",
 	Usage: "[dhcp-interface] enable automatic DHCP proxy interface (macvlan) management",
 }
-
-

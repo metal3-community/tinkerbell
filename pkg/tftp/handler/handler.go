@@ -14,7 +14,7 @@ type Handler interface {
 }
 
 // HandlerFunc is an adapter to allow the use of ordinary functions as TFTP handlers.
-type HandlerFunc func(filename string, rf io.ReaderFrom) error
+type HandlerFunc func(filename string, rf io.ReaderFrom) error //nolint:revive // method name should match naming convention for Go's http.HandlerFunc
 
 // ServeTFTP calls f(filename, rf).
 func (f HandlerFunc) ServeTFTP(filename string, rf io.ReaderFrom) error {

@@ -41,6 +41,11 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          install-only: true
+
       - uses: bufbuild/buf-action@v1
         with:
           setup_only: true
@@ -50,11 +55,8 @@ jobs:
 
       - name: Generate controller manifests
         run: |
-          go tool controller-gen crd webhook paths="./..." output:crd:artifacts:config=crd/bases
-          go tool controller-gen object:headerFile="script/boilerplate.go.txt" paths="./..."
-
-      - name: Generate UI assets
-        run: go tool templ generate -path ./ui/templates
+          go generate ./...
+          golangci-lint fmt ./...
 
       - name: Check for changes
         run: git diff --compact-summary --exit-code

@@ -17,12 +17,12 @@ func TestNewConfig(t *testing.T) {
 	tests := []struct {
 		name     string
 		opts     []Option
-		validate func(*testing.T, *Config)
+		validate func(*testing.T, *Handler)
 	}{
 		{
 			name: "default configuration",
 			opts: nil,
-			validate: func(t *testing.T, c *Config) {
+			validate: func(t *testing.T, c *Handler) {
 				t.Helper()
 				if c.ImagePath != defaultImagePath {
 					t.Errorf("expected ImagePath=%s, got %s", defaultImagePath, c.ImagePath)
@@ -52,7 +52,7 @@ func TestNewConfig(t *testing.T) {
 				WithOCIPassword("testpass"),
 				WithPullTimeout(5 * time.Minute),
 			},
-			validate: func(t *testing.T, c *Config) {
+			validate: func(t *testing.T, c *Handler) {
 				t.Helper()
 				if c.ImagePath != "/custom/path" {
 					t.Errorf("expected ImagePath=/custom/path, got %s", c.ImagePath)
@@ -132,8 +132,7 @@ func TestHTTPServer(t *testing.T) {
 	}
 
 	config := NewConfig(WithImagePath(dir))
-	log := testr.New(t)
-	handler, err := config.Handler(log)
+	handler, err := config.Handle()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,12 +251,12 @@ func contains(s, substr string) bool {
 func TestConfigValidation(t *testing.T) {
 	tests := []struct {
 		name   string
-		config *Config
+		config *Handler
 		valid  bool
 	}{
 		{
 			name: "valid config with all fields",
-			config: &Config{
+			config: &Handler{
 				ImagePath:     "/var/lib/images",
 				OCIRegistry:   "ghcr.io",
 				OCIRepository: "tinkerbell/captain/artifacts",
@@ -268,7 +267,7 @@ func TestConfigValidation(t *testing.T) {
 		},
 		{
 			name: "valid config with minimal fields",
-			config: &Config{
+			config: &Handler{
 				ImagePath:     "/var/lib/images",
 				OCIRegistry:   "ghcr.io",
 				OCIRepository: "tinkerbell/captain/artifacts",
@@ -279,7 +278,7 @@ func TestConfigValidation(t *testing.T) {
 		},
 		{
 			name: "config with sha256 digest reference",
-			config: &Config{
+			config: &Handler{
 				ImagePath:     "/var/lib/images",
 				OCIRegistry:   "ghcr.io",
 				OCIRepository: "tinkerbell/captain/artifacts",

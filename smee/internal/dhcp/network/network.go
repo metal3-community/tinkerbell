@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -47,7 +46,7 @@ const (
 )
 
 // NetworkManager handles the lifecycle of a macvlan/ipvlan interface.
-type NetworkManager struct {
+type NetworkManager struct { //nolint:revive // stuttering is acceptable in this context (NetworkManager manages network interfaces)
 	ifaceType    interfaceType
 	log          logr.Logger
 	hostNs       netns.NsHandle
@@ -55,58 +54,25 @@ type NetworkManager struct {
 	srcInterface string
 }
 
-// CheckNetworkPrivileges verifies the running container has the privileges
-// required to configure a DHCP proxy network interface. It checks two
-// necessary conditions:
-//
-//  1. The container can access the host network namespace (hostPID: true).
-//  2. The process has CAP_NET_ADMIN capability.
-//
-// Returns a detailed, actionable error if any check fails.
+// CheckNetworkPrivileges verifies that the process has the necessary privileges to manage network interfaces.
+// It checks access to the host network namespace via PID 1 and ensures the container is not already in the host network namespace.
 func CheckNetworkPrivileges() error {
-	var missing []string
-
-	// Check 1: Access to PID 1 network namespace (requires hostPID: true).
+	// Check access to PID 1 network namespace (requires hostPID: true).
 	hostNs, err := netns.GetFromPid(1)
+	defer func() { hostNs.Close() }()
 	if err != nil {
-		missing = append(missing, fmt.Sprintf("  - cannot access host network namespace via PID 1: %v", err))
-	} else {
-		currentNs, nsErr := netns.Get()
-		if nsErr == nil {
-			if int(hostNs) == int(currentNs) {
-				// Same namespace means we're already in the host network namespace —
-				// this is not supported; we need an isolated container namespace.
-				missing = append(missing, "  - container is already in the host network namespace; use a dedicated pod with hostPID:true instead of hostNetwork:true")
-			}
-			currentNs.Close()
+		return fmt.Errorf("cannot access host network namespace via PID 1: %v", err)
+	}
+	currentNs, nsErr := netns.Get()
+	defer func() { _ = currentNs.Close() }()
+	if nsErr == nil {
+		if int(hostNs) == int(currentNs) {
+			// Same namespace means we're already in the host network namespace —
+			// this is not supported; we need an isolated container namespace.
+			return errors.New("container is already in the host network namespace; use a dedicated pod with hostPID:true instead of hostNetwork:true")
 		}
-		hostNs.Close()
 	}
-
-	// Check 2: CAP_NET_ADMIN.
-	if !hasNetAdminCapability() {
-		missing = append(missing, "  - CAP_NET_ADMIN capability is not set")
-	}
-
-	if len(missing) == 0 {
-		return nil
-	}
-
-	return fmt.Errorf(`DHCP proxy mode requires elevated container privileges but the following checks failed:
-
-%s
-
-To resolve, ensure your pod spec includes:
-    spec:
-      hostPID: true
-      containers:
-      - securityContext:
-          capabilities:
-            add: ["NET_ADMIN"]
-
-If you have already configured a network interface in the container (e.g. via
-an init container), set the DHCP bind interface explicitly to skip automatic
-interface configuration.`, strings.Join(missing, "\n"))
+	return nil
 }
 
 // hasNetAdminCapability is implemented in capabilities_linux.go and capabilities_other.go.

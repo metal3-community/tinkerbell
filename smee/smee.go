@@ -458,7 +458,7 @@ func (c *Config) ISOHandler(log logr.Logger) (http.Handler, error) {
 
 // OSIEHandler returns an http.Handler that serves OSIE files from the filesystem.
 // Returns nil, nil if the OSIE service is disabled.
-func (c *Config) OSIEHandler(log logr.Logger) (http.Handler, error) {
+func (c *Config) OSIEHandler() (http.Handler, error) {
 	if !c.OSIE.Enabled {
 		return nil, nil
 	}
@@ -472,7 +472,7 @@ func (c *Config) OSIEHandler(log logr.Logger) (http.Handler, error) {
 		osie.WithOCIPassword(c.OSIE.OCIPassword),
 		osie.WithPullTimeout(c.OSIE.PullTimeout),
 	)
-	return oc.Handler(log)
+	return oc.Handle()
 }
 
 // OSIETFTPHandler returns a TFTP handler that serves OSIE files.

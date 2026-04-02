@@ -63,7 +63,7 @@ func startHTTPServer(ctx context.Context, globals *flag.GlobalConfig, s *flag.Sm
 				"smee iPXE script handler",
 			)
 		}
-		if oh, err := s.Config.OSIEHandler(smeeLog); err == nil && oh != nil {
+		if oh, err := s.Config.OSIEHandler(); err == nil && oh != nil {
 			routeList.Register(routeOSIE,
 				middleware.WithLogLevel(middleware.LogLevelAlways, oh),
 				"smee OSIE image handler",

@@ -16,12 +16,12 @@ ifeq ($(shell uname), Darwin)
   endif
 endif
 
-GIT_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || true)
+GIT_TAG := $(shell git describe --tags --abbrev=0 --match="v*" 2>/dev/null || true)
 ifeq ($(GIT_TAG),)
 	GIT_TAG := v0.0.0
+else
+	GIT_PREV_TAG := $(shell git describe --tags --abbrev=0 --match="v*" $(GIT_TAG)^ 2>/dev/null || true)
 endif
-export GORELEASER_CURRENT_TAG := $(patsubst api/%,%,$(GIT_TAG))
-export GORELEASER_PREVIOUS_TAG := $(patsubst api/%,%,$(shell git describe --tags --abbrev=0 $(GIT_TAG)^ 2>/dev/null || true))
 VERSION ?=
 ifeq ($(VERSION),)
 	VERSION := $(shell go run --buildvcs=true ./script/version/)
@@ -200,7 +200,7 @@ build-image: $(GORELEASER) ## Build the container images
 
 .PHONY: build-image-push
 build-image-push: $(GORELEASER) ## Build and push the container images
-	GORELEASER_CURRENT_TAG=$(shell git rev-parse HEAD) $(GORELEASER) release --clean --skip=validate --skip=sign ${GORELEASER_EXTRA_FLAGS}
+	GORELEASER_CURRENT_TAG=$(GIT_TAG) GORELEASER_PREVIOUS_TAG=$(GIT_PREV_TAG) $(GORELEASER) release --clean --skip=validate --skip=sign ${GORELEASER_EXTRA_FLAGS}
 
 ######### Build container images - end   #########
 

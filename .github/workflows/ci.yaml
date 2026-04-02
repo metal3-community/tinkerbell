@@ -48,6 +48,17 @@ jobs:
       - name: Generate Protobuf code
         run: buf generate
 
+      - name: Generate controller manifests
+        run: |
+          go tool controller-gen crd webhook paths="./..." output:crd:artifacts:config=crd/bases
+          go tool controller-gen object:headerFile="script/boilerplate.go.txt" paths="./..."
+
+      - name: Generate UI assets
+        run: go tool templ generate -path ./ui/templates
+
+      - name: Check for changes
+        run: git diff --compact-summary --exit-code
+
   validation:
     runs-on: ubuntu-latest
     steps:

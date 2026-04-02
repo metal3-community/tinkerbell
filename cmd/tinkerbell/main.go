@@ -8,6 +8,8 @@ import (
 	"syscall"
 )
 
+//go:generate go tool controller-gen crd webhook paths="../../..." output:crd:artifacts:config=../../crd/bases
+//go:generate go tool controller-gen object:headerFile="../../script/boilerplate.go.txt" paths="./..."
 func main() {
 	ctx, done := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
 

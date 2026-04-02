@@ -83,6 +83,7 @@ type UnimplementedWorkflowServiceServer struct{}
 func (UnimplementedWorkflowServiceServer) GetAction(context.Context, *ActionRequest) (*ActionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAction not implemented")
 }
+
 func (UnimplementedWorkflowServiceServer) ReportActionStatus(context.Context, *ActionStatusRequest) (*ActionStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReportActionStatus not implemented")
 }

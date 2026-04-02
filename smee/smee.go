@@ -35,7 +35,6 @@ import (
 	"github.com/tinkerbell/tinkerbell/smee/internal/osie"
 	"github.com/tinkerbell/tinkerbell/smee/internal/syslog"
 	"golang.org/x/sync/errgroup"
-	"k8s.io/client-go/rest"
 )
 
 // MetricsRegistry returns the Prometheus registry that contains all Smee metrics.
@@ -254,20 +253,13 @@ type TLS struct {
 // DHCPInterface holds configuration for DHCP proxy interface management.
 // In proxy and auto-proxy modes the service automatically creates a macvlan
 // interface so it can receive broadcast DHCP packets from the host network.
-// When leader election is enabled, only the elected leader creates the interface,
-// aligning with the Kubernetes Service leader pod (e.g. Cilium L2 advertisements).
+// Kubernetes scheduling (e.g. DaemonSet or anti-affinity) ensures at most
+// one pod per node, removing the need for leader election.
 type DHCPInterface struct {
 	// Enabled controls whether the DHCP proxy interface manager is active.
 	// When true, a macvlan interface is automatically created in proxy/auto-proxy
 	// mode so the service can receive broadcast DHCP packets.
 	Enabled bool
-	// EnableLeaderElection determines if leader election is enabled.
-	EnableLeaderElection bool
-	// LeaderElectionNamespace is the namespace for the leader election Lease resource.
-	// Defaults to "default" if empty.
-	LeaderElectionNamespace string
-	// RestConfig is the Kubernetes client config for leader election.
-	RestConfig *rest.Config
 }
 
 // NewConfig is a constructor for the Config struct. It will set default values for the Config struct.
@@ -528,13 +520,10 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	// ifReady signals when the DHCP proxy interface is configured and ready to
-	// receive packets. ifLost signals when the interface is torn down (e.g.
-	// leadership lost). The DHCP server goroutine uses both channels to
-	// start/stop serving, treating the interface manager as a supervisor.
+	// receive packets. The DHCP server waits for this before binding.
 	ifReady := make(chan struct{}, 1)
-	ifLost := make(chan struct{}, 1)
 
-	// DHCP proxy interface management (macvlan with optional leader election).
+	// DHCP proxy interface management (macvlan).
 	// Automatically enabled in proxy/auto-proxy mode when no explicit bind interface
 	// is configured. Privileges are verified upfront with a clear error if missing.
 	if c.DHCPInterface.Enabled && c.DHCP.BindInterface == "" {
@@ -542,7 +531,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 			return err
 		}
 		g.Go(func() error {
-			return c.startDHCPInterface(ctx, log.WithName("dhcpif"), ifReady, ifLost)
+			return c.startDHCPInterface(ctx, log.WithName("dhcpif"), ifReady)
 		})
 	} else {
 		ifReady <- struct{}{}
@@ -587,49 +576,22 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		}
 		log.Info("starting dhcp server", "bindAddr", dhcpAddrPort)
 		g.Go(func() error {
-			for {
-				// Wait for the DHCP proxy interface to be ready before binding.
-				// When leader election is enabled, this may fire multiple times
-				// as leadership is gained and lost.
-				select {
-				case <-ifReady:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-
-				log.Info("DHCP proxy interface ready, binding DHCP server")
-				conn, err := server4.NewIPv4UDPConn(c.DHCP.BindInterface, net.UDPAddrFromAddrPort(dhcpAddrPort))
-				if err != nil {
-					return err
-				}
-
-				serveCtx, serveCancel := context.WithCancel(ctx)
-				ds := &server.DHCP{Logger: log, Conn: conn, Handlers: []server.Handler{dh}}
-
-				// Run serve in the background so we can select on ifLost.
-				serveDone := make(chan error, 1)
-				go func() { serveDone <- ds.Serve(serveCtx) }()
-
-				// Wait for either interface loss, serve completion, or global shutdown.
-				select {
-				case <-ifLost:
-					log.Info("DHCP proxy interface lost, stopping DHCP server")
-					serveCancel()
-					<-serveDone
-					conn.Close()
-					// Loop back to wait for the interface to become ready again.
-					continue
-				case err := <-serveDone:
-					serveCancel()
-					conn.Close()
-					return err
-				case <-ctx.Done():
-					serveCancel()
-					<-serveDone
-					conn.Close()
-					return ctx.Err()
-				}
+			// Wait for the DHCP proxy interface to be ready before binding.
+			select {
+			case <-ifReady:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
+
+			log.Info("DHCP proxy interface ready, binding DHCP server")
+			conn, err := server4.NewIPv4UDPConn(c.DHCP.BindInterface, net.UDPAddrFromAddrPort(dhcpAddrPort))
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			ds := &server.DHCP{Logger: log, Conn: conn, Handlers: []server.Handler{dh}}
+			return ds.Serve(ctx)
 		})
 	}
 
@@ -641,39 +603,9 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 }
 
 // startDHCPInterface manages the macvlan interface lifecycle for DHCP proxy mode.
-// When leader election is enabled, the interface is only created on the elected leader,
-// ensuring alignment with the Kubernetes Service leader pod (e.g. Cilium L2
-// advertisements). The ready channel is closed once the interface is configured so
-// the DHCP server can start binding. The lost channel is closed when the interface
-// is torn down (leadership lost) so the DHCP server can stop serving.
-func (c *Config) startDHCPInterface(ctx context.Context, log logr.Logger, ready chan<- struct{}, lost chan<- struct{}) error {
-	if c.DHCPInterface.EnableLeaderElection {
-		lm, err := network.NewLeaderManager(network.LeaderConfig{
-			RestConfig: c.DHCPInterface.RestConfig,
-			Namespace:  c.DHCPInterface.LeaderElectionNamespace,
-			OnReady: func() {
-				log.Info("DHCP proxy interface ready via leader election, signaling DHCP server")
-				select {
-				case ready <- struct{}{}:
-				default:
-				}
-			},
-			OnLost: func() {
-				log.Info("DHCP proxy interface lost via leader election, signaling DHCP server")
-				select {
-				case lost <- struct{}{}:
-				default:
-				}
-			},
-		}, log)
-		if err != nil {
-			return fmt.Errorf("creating leader-elected interface manager: %w", err)
-		}
-		defer lm.Close()
-		return lm.Start(ctx)
-	}
-
-	// No leader election: set up interface immediately, then signal ready.
+// It creates the interface immediately and signals ready. Kubernetes scheduling
+// (e.g. DaemonSet or anti-affinity) ensures at most one pod per node.
+func (c *Config) startDHCPInterface(ctx context.Context, log logr.Logger, ready chan<- struct{}) error {
 	ifMgr, err := network.NewNetworkManager(log)
 	if err != nil {
 		return fmt.Errorf("creating interface manager: %w", err)
@@ -683,7 +615,8 @@ func (c *Config) startDHCPInterface(ctx context.Context, log logr.Logger, ready 
 	if err := ifMgr.Setup(ctx); err != nil {
 		return fmt.Errorf("setting up DHCP proxy interface: %w", err)
 	}
-	// Interface is ready; allow the DHCP server to start.
+
+	log.Info("DHCP proxy interface ready, signaling DHCP server")
 	select {
 	case ready <- struct{}{}:
 	default:

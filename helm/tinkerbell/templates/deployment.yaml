@@ -1,7 +1,5 @@
 {{- $publicIP := .Values.publicIP }}
 {{- $trustedProxies := .Values.trustedProxies }}
-{{- $sourceInterface := .Values.deployment.init.sourceInterface }}
-{{- $dhcpInterfaceType := .Values.deployment.init.interfaceMode }}
 {{- if .Values.deployment.daemonSet.enabled }}
 apiVersion: apps/v1
 kind: DaemonSet
@@ -188,9 +186,13 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.deployment.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- tpl ( . | toYaml) $ | nindent 8 }}
+      {{- end }}
       {{- with .Values.deployment.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- tpl ( . | toYaml) $ | nindent 8 }}
       {{- end }}
       {{- with .Values.deployment.tolerations }}
       tolerations:

@@ -7,7 +7,14 @@ deployment:
   #   value: "my-value"
   additionalArgs: []
   # - "--my-arg=my-value"
-  affinity: {}
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: '{{ include "tinkerbell.fullname" . }}'
+              app.kubernetes.io/instance: "{{ .Release.Name }}"
+          topologyKey: kubernetes.io/hostname
   agentImage: ghcr.io/tinkerbell/tink-agent
   # agentImageTag is here as a placeholder and to show its possible to be set.
   # It is not set because in the deployment.yaml a coalesce is used with this value
@@ -118,8 +125,6 @@ deployment:
       bindPort: 7272
     dhcpInterface:
       enabled: false
-      leaderElectionEnabled: false
-      leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
     tinkController:
       enableLeaderElection: true
       leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
@@ -214,6 +219,7 @@ deployment:
       failureThreshold: 30
       successThreshold: 1
   tolerations: []
+  topologySpreadConstraints: []
   # Additional volumes on the output Deployment definition.
   volumes:
     - name: captain-artifacts

@@ -237,9 +237,6 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 	// Rufio Controller
 	rc.Config.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), rc.Config.EnableLeaderElection, rc.Config.LeaderElectionNamespace)
 
-	// Smee DHCP Interface
-	s.Config.DHCPInterface.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), s.Config.DHCPInterface.EnableLeaderElection, s.Config.DHCPInterface.LeaderElectionNamespace)
-
 	// Second star
 	if err := ssc.Convert(); err != nil {
 		return fmt.Errorf("failed to convert secondstar config: %w", err)
@@ -341,7 +338,6 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		tc.Config.DynamicClient = b
 		rc.Config.Client = b.ClientConfig
 		ssc.Config.Backend = b
-		s.Config.DHCPInterface.RestConfig = b.ClientConfig
 		if uic.Config.EnableAutoLogin {
 			uic.Config.AutoLoginRestConfig = b.ClientConfig
 			uic.Config.AutoLoginNamespace = globals.BackendKubeNamespace

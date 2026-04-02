@@ -1,32 +1,28 @@
 // Package network manages macvlan/ipvlan network interfaces used by the
 // DHCP proxy server to receive broadcast DHCP packets from the host network.
 // In proxy mode the DHCP server needs a Layer 2 interface attached to the
-// host network namespace to see uncast/broadcast DHCP traffic.
+// host network namespace to see broadcast DHCP traffic.
+//
+// The interface lifecycle is simple: clean up any stale interfaces in both
+// host and container namespaces, create the requested interface type in the
+// host namespace, move it into the container, bring it up, and assign an
+// address. Kubernetes scheduling (e.g. DaemonSet or anti-affinity) ensures
+// at most one pod per node, removing the need for leader election.
 package network
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net"
-	"os"
 	"runtime"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/klog/v2"
 )
 
 // interfaceType represents the type of virtual network interface.
@@ -41,40 +37,14 @@ const (
 	// dhcpIfAddr is the IP assigned to the created interface.
 	dhcpIfAddr = "127.1.1.1/32"
 
-	// Leader election defaults — not user-configurable.
-	// These are deliberately longer than the controller-runtime defaults (15s/10s/2s)
-	// because the DHCP interface lifecycle is expensive to flap and the embedded
-	// API server may be slow to respond during multi-component startup.
-	defaultLeaseDuration = 30 * time.Second
-	defaultRenewDeadline = 20 * time.Second
-	defaultRetryPeriod   = 5 * time.Second
-	defaultLockName      = "smee-dhcp-interface"
-	defaultNamespace     = "default"
 	// defaultIfaceType is the default interface type when none is specified.
 	defaultIfaceType = interfaceTypeMacvlan
-
-	// defaultStabilizePeriod is the time to wait after re-acquiring leadership
-	// before setting up the interface. This prevents interface flapping when
-	// leadership bounces rapidly (e.g. during API server rolling restarts).
-	defaultStabilizePeriod = 10 * time.Second
-
-	// maxSetupRetries is the maximum number of attempts to set up the network
-	// interface after acquiring leadership before giving up the lease.
-	maxSetupRetries = 5
 
 	// ifaNoPrefixRoute is the IFA_F_NOPREFIXROUTE flag value (0x200).
 	// Prevents the kernel from adding a prefix route when an address is added.
 	// Defined here because unix.IFA_F_NOPREFIXROUTE is only available on Linux.
 	ifaNoPrefixRoute = 0x200
 )
-
-// networkInterfaceManager is the common interface for all DHCP proxy interface
-// lifecycle managers (macvlan, ipvlan).
-type networkInterfaceManager interface {
-	Setup(ctx context.Context) error
-	Cleanup() error
-	Close() error
-}
 
 // NetworkManager handles the lifecycle of a macvlan/ipvlan interface.
 type NetworkManager struct {
@@ -83,52 +53,6 @@ type NetworkManager struct {
 	hostNs       netns.NsHandle
 	currentLink  netlink.Link
 	srcInterface string
-}
-
-// LeaderConfig holds configuration for leader-elected interface management.
-// Only the fields that callers need to set are exported; all timing/naming
-// defaults are applied internally.
-type LeaderConfig struct {
-	// RestConfig is the Kubernetes client configuration for leader election.
-	RestConfig *rest.Config
-	// Namespace for the leader election Lease resource.
-	// Defaults to "default" if empty.
-	Namespace string
-
-	// OnReady is called when the DHCP proxy interface is fully configured and
-	// ready to receive packets. The DHCP server should start serving when this
-	// fires. May be nil.
-	OnReady func()
-	// OnLost is called when leadership is lost and the DHCP proxy interface
-	// has been torn down. The DHCP server should stop accepting new packets
-	// when this fires. May be nil.
-	OnLost func()
-}
-
-// LeaderManager coordinates macvlan/ipvlan interface lifecycle with
-// Kubernetes leader election. Only the elected leader creates the DHCP proxy
-// interface, ensuring a single pod receives broadcast DHCP packets.
-//
-// LeaderManager acts as a supervisor: it notifies the DHCP server when the
-// interface is ready (OnReady) and when it is torn down (OnLost), allowing
-// the server to start/stop cleanly in response to leadership changes.
-type LeaderManager struct {
-	ifMgr       networkInterfaceManager
-	electionCfg leaderelection.LeaderElectionConfig
-	log         logr.Logger
-
-	retryPeriod time.Duration
-	stabilize   time.Duration
-	onReady     func()
-	onLost      func()
-
-	// interfaceUp tracks whether the network interface was successfully
-	// configured. OnStoppedLeading always fires (even if we never acquired
-	// the lease or Setup failed), so we only call onLost/Cleanup when the
-	// interface was actually brought up.
-	interfaceUp atomic.Bool
-
-	closeOnce sync.Once
 }
 
 // CheckNetworkPrivileges verifies the running container has the privileges
@@ -545,253 +469,4 @@ func WaitForInterface(ctx context.Context, ifName string, timeout time.Duration)
 			}
 		}
 	}
-}
-
-// --- Leader election ---
-
-// NewLeaderManager creates a leader-elected network interface manager.
-// Only cfg.RestConfig is required; cfg.Namespace defaults to "default".
-func NewLeaderManager(cfg LeaderConfig, log logr.Logger) (*LeaderManager, error) {
-	if log.GetSink() == nil {
-		log = logr.Discard()
-	}
-
-	if cfg.RestConfig == nil {
-		return nil, fmt.Errorf("rest config is required for leader election")
-	}
-
-	ifMgr, err := NewNetworkManager(log.WithName("interface"))
-	if err != nil {
-		return nil, fmt.Errorf("creating network interface manager: %w", err)
-	}
-
-	lm, err := newLeaderManagerWithIfMgr(cfg, ifMgr, log)
-	if err != nil {
-		_ = ifMgr.Close()
-		return nil, err
-	}
-	return lm, nil
-}
-
-// newLeaderManagerWithIfMgr creates a LeaderManager with a pre-created
-// networkInterfaceManager using the standard production defaults.
-// This allows tests to inject a mock interface manager.
-func newLeaderManagerWithIfMgr(cfg LeaderConfig, ifMgr networkInterfaceManager, log logr.Logger) (*LeaderManager, error) {
-	return newLeaderManagerWithTimings(cfg, defaultLockName, leaderIdentity(),
-		defaultLeaseDuration, defaultRenewDeadline, defaultRetryPeriod,
-		defaultStabilizePeriod, ifMgr, log)
-}
-
-// newLeaderManagerWithTimings creates a LeaderManager with explicit timing and
-// identity parameters. Intended for use in tests to speed up leader election.
-func newLeaderManagerWithTimings(cfg LeaderConfig, lockName, identity string, leaseDuration, renewDeadline, retryPeriod, stabilize time.Duration, ifMgr networkInterfaceManager, log logr.Logger) (*LeaderManager, error) {
-	if log.GetSink() == nil {
-		log = logr.Discard()
-	}
-
-	if cfg.RestConfig == nil {
-		return nil, fmt.Errorf("rest config is required for leader election")
-	}
-
-	ns := cfg.Namespace
-	if ns == "" {
-		ns = defaultNamespace
-	}
-
-	clientset, err := kubernetes.NewForConfig(cfg.RestConfig)
-	if err != nil {
-		return nil, fmt.Errorf("creating kubernetes client: %w", err)
-	}
-
-	lock := &resourcelock.LeaseLock{
-		LeaseMeta: metav1.ObjectMeta{
-			Name:      lockName,
-			Namespace: ns,
-		},
-		Client: clientset.CoordinationV1(),
-		LockConfig: resourcelock.ResourceLockConfig{
-			Identity: identity,
-		},
-	}
-
-	lm := &LeaderManager{
-		ifMgr:       ifMgr,
-		log:         log,
-		retryPeriod: retryPeriod,
-		stabilize:   stabilize,
-		onReady:     cfg.OnReady,
-		onLost:      cfg.OnLost,
-	}
-
-	lm.electionCfg = leaderelection.LeaderElectionConfig{
-		Lock:          lock,
-		LeaseDuration: leaseDuration,
-		RenewDeadline: renewDeadline,
-		RetryPeriod:   retryPeriod,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: lm.onStartedLeading,
-			OnStoppedLeading: lm.onStoppedLeading,
-			OnNewLeader: func(id string) {
-				if id == identity {
-					return
-				}
-				log.Info("new leader elected", "leader", id)
-			},
-		},
-		// ReleaseOnCancel is false: on context cancellation the lease is NOT
-		// explicitly released. Instead it expires naturally after LeaseDuration.
-		// This avoids extra API calls during chaotic shutdown (e.g. another
-		// errgroup member failing) and eliminates the race between the release
-		// call and the Cleanup path. For single-replica Tinkerbell deployments
-		// the 30 s expiry window is acceptable.
-		ReleaseOnCancel: false,
-		Name:            lockName,
-		// Coordinated (CLE) is deliberately not enabled. CLE is an Alpha
-		// feature that requires the CoordinatedLeaderElection API-server
-		// feature gate and is designed for version-aware leader selection
-		// during rolling upgrades (e.g. kube-controller-manager). The DHCP
-		// interface only needs simple single-leader semantics.
-	}
-
-	return lm, nil
-}
-
-// onStartedLeading is called when this instance becomes the leader.
-// It retries interface setup with capped exponential backoff before
-// giving up and releasing the lease.
-func (lm *LeaderManager) onStartedLeading(ctx context.Context) {
-	lm.log.Info("elected as leader, setting up DHCP proxy interface")
-
-	var setupOK bool
-	for attempt := range maxSetupRetries {
-		if err := lm.ifMgr.Setup(ctx); err != nil {
-			if ctx.Err() != nil {
-				lm.log.Info("context cancelled during interface setup")
-				return
-			}
-			backoff := lm.retryBackoff(attempt)
-			lm.log.Error(err, "interface setup failed, retrying",
-				"attempt", attempt+1,
-				"maxAttempts", maxSetupRetries,
-				"backoff", backoff)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff):
-				continue
-			}
-		}
-		setupOK = true
-		break
-	}
-
-	if !setupOK {
-		lm.log.Error(nil, "interface setup failed after all retries, releasing leadership",
-			"attempts", maxSetupRetries)
-		return
-	}
-
-	lm.interfaceUp.Store(true)
-	lm.log.Info("DHCP proxy interface ready")
-	if lm.onReady != nil {
-		lm.onReady()
-	}
-
-	<-ctx.Done()
-}
-
-// onStoppedLeading is called when leadership is lost. The leaderelection
-// package calls this even if the lease was never acquired (e.g. context
-// cancelled during initial acquire), so we only tear down the interface
-// and notify the DHCP server when it was actually brought up.
-func (lm *LeaderManager) onStoppedLeading() {
-	if !lm.interfaceUp.CompareAndSwap(true, false) {
-		lm.log.Info("leadership callback fired but interface was never set up, skipping cleanup")
-		return
-	}
-	lm.log.Info("lost leadership, tearing down DHCP proxy interface")
-	if lm.onLost != nil {
-		lm.onLost()
-	}
-	if err := lm.ifMgr.Cleanup(); err != nil {
-		lm.log.Error(err, "failed to cleanup interface after losing leadership")
-	}
-}
-
-// retryBackoff returns a capped exponential backoff duration for the given
-// attempt number, based on the configured retry period.
-func (lm *LeaderManager) retryBackoff(attempt int) time.Duration {
-	const maxBackoff = 30 * time.Second
-	backoff := time.Duration(float64(lm.retryPeriod) * math.Pow(2, float64(attempt)))
-	if backoff > maxBackoff {
-		backoff = maxBackoff
-	}
-	return backoff
-}
-
-// Start runs the leader election loop. It blocks until ctx is cancelled.
-// A new LeaderElector is created for each election cycle because a
-// LeaderElector's internal state becomes invalid after Run returns.
-// If leadership is lost (e.g. due to a transient API server outage), the
-// manager waits for a stabilization period before re-entering the election
-// to prevent interface flapping.
-func (lm *LeaderManager) Start(ctx context.Context) error {
-	lm.log.Info("starting leader election for DHCP proxy interface")
-	// Inject our structured logger so client-go leader election code that
-	// calls klog.FromContext uses the Smee logger, not the global klog
-	// which may be overwritten by rufio or tink-controller.
-	ctx = klog.NewContext(ctx, lm.log)
-
-	firstRun := true
-	for {
-		// LeaderElector.Run is single-use: a new instance must be created for
-		// each election cycle. See k8s.io/client-go/tools/leaderelection docs.
-		elector, err := leaderelection.NewLeaderElector(lm.electionCfg)
-		if err != nil {
-			return fmt.Errorf("creating leader elector: %w", err)
-		}
-
-		elector.Run(ctx)
-
-		if ctx.Err() != nil {
-			lm.log.Info("leader election stopped", "reason", ctx.Err())
-			return nil
-		}
-
-		// Leadership was lost unexpectedly (API server blip, network
-		// partition, etc.). Wait for a stabilization period before
-		// re-entering the election to avoid interface flapping.
-		delay := lm.retryPeriod
-		if !firstRun {
-			delay = lm.stabilize
-		}
-		firstRun = false
-
-		lm.log.Info("leader election ended, waiting before re-election",
-			"delay", delay)
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(delay):
-		}
-	}
-}
-
-// Close releases all resources held by the leader manager. Safe to call
-// multiple times.
-func (lm *LeaderManager) Close() error {
-	var err error
-	lm.closeOnce.Do(func() {
-		err = lm.ifMgr.Close()
-	})
-	return err
-}
-
-func leaderIdentity() string {
-	if h := os.Getenv("HOSTNAME"); h != "" {
-		return h
-	}
-	h, _ := os.Hostname()
-	return h
 }

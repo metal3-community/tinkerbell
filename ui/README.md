@@ -8,13 +8,10 @@ The UI is built as part of the main Tinkerbell binary. Use the targets from the 
 
 ```bash
 # Generate all UI files (templ templates and tailwind CSS)
-make ui-generate
+go generate ./...
 
 # Watch and rebuild CSS on changes (for development)
-make ui-css-watch
-
-# Clean UI build artifacts
-make ui-clean
+bunx tailwindcss -i ./ui/assets/css/input.css -o ./ui/assets/css/output.css --watch
 ```
 
 ## Project Structure

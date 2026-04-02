@@ -11,7 +11,7 @@ The UI is built as part of the main Tinkerbell binary. Use the targets from the 
 go generate ./...
 
 # Watch and rebuild CSS on changes (for development)
-bunx tailwindcss -i ./ui/assets/css/input.css -o ./ui/assets/css/output.css --watch
+tailwindcss -i assets/css/input.css -o assets/css/output.css --cwd=ui --minify --watch;
 ```
 
 ## Project Structure

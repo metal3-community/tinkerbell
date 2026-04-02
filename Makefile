@@ -28,36 +28,14 @@ ifeq ($(VERSION),)
 endif
 CGO_ENABLED := 0
 export CGO_ENABLED
-# UPX compression reduces binary size by ~50-70% but only works on Linux
-# - On Linux: COMPRESS defaults to true (automatic UPX compression)
-# - On macOS/others: COMPRESS defaults to false (UPX binaries won't execute)
-# - Override with: make COMPRESS=true cross-compile (CI/Linux environments)
-ifeq ($(shell uname),Linux)
-	COMPRESS := true
-else
-	COMPRESS := false
-endif
-UPX_BASEDIR := $(PWD)/build
-LOCAL_ARCH := $(shell uname -m)
-LOCAL_ARCH_ALT :=
-ifeq ($(LOCAL_ARCH),x86_64)
-	LOCAL_ARCH_ALT := amd64
-else ifeq ($(LOCAL_ARCH),aarch64)
-	LOCAL_ARCH_ALT := arm64
-endif
+
 GITHUB_REPOSITORY_OWNER ?= tinkerbell
 HELM_REPO_NAME ?= ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts
 
 ########### Tools variables ###########
 # Tool versions
-GOIMPORT_VER           := latest
-CONTROLLER_GEN_VERSION := v0.20.0
-BUF_VERSION            := v1.56.0
-PROTOC_GEN_GO_GRPC_VER := v1.5.1  # must be in sync with the version in buf.gen.yaml
-PROTOC_GEN_GO_VER      := v1.36.7 # must be in sync with the version in buf.gen.yaml
-UPX_VER 			   := 4.2.4
 GODEPGRAPH_VER 	       := v0.0.0-20240411160502-0f324ca7e282
-GOLANGCI_LINT_VERSION  := v2.8.0
+GOLANGCI_LINT_VERSION  := v2.11.2
 
 GORELEASER_VER := v2.12.2
 GORELEASER_BIN := goreleaser
@@ -66,18 +44,10 @@ GORELEASER_BIN := goreleaser
 TOOLS_BIN_DIR := $(abspath bin)
 
 # Tool binaries with versions
-CONTROLLER_GEN := go tool controller-gen
-BUF_BIN := buf
-BUF := $(TOOLS_BIN_DIR)/$(BUF_BIN)-$(BUF_VERSION)
-GODEPGRAPH_BIN := godepgraph
 GODEPGRAPH := go tool godepgraph
 GORELEASER := $(TOOLS_BIN_DIR)/$(GORELEASER_BIN)-$(GORELEASER_VER)
+GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 #######################################
-######### Container images variable #########
-# `?=` will only set the variable if it is not already set by the environment
-IMAGE_NAME       ?= tinkerbell/tinkerbell:latest
-IMAGE_NAME_AGENT ?= tinkerbell/tink-agent:latest
-#############################################
 
 all: help
 
@@ -117,12 +87,8 @@ coverage: test ## Show test coverage
 	go tool cover -func=coverage.out
 	mv coverage.out coverage.txt
 
-.PHONY: ci-checks
-ci-checks: $(GOIMPORTS_FQP) ./script/ci-checks.sh ## Run the ci-checks.sh script
-	GOIMPORTS=$(GOIMPORTS_FQP) ./script/ci-checks.sh
-
 .PHONY: ci
-ci: ci-checks coverage lint vet ## Runs all the same validations and tests that run in CI
+ci: coverage lint vet ## Runs all the same validations and tests that run in CI
 
 .PHONY: generate
 generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -132,7 +98,7 @@ generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject
 .PHONY: dep-graph
 dep-graph: ## Generate a dependency graph
 	rm -rf out/dep-graph.txt out/dep-graph.png
-	$(GODEPGRAPH) -s -novendor -onlyprefixes "github.com/tinkerbell/tinkerbell,./cmd/agent,./cmd/tinkerbell" ./cmd/agent ./cmd/tinkerbell > out/dep-graph.txt
+	go tool godepgraph -s -novendor -onlyprefixes "github.com/tinkerbell/tinkerbell,./cmd/agent,./cmd/tinkerbell" ./cmd/agent ./cmd/tinkerbell > out/dep-graph.txt
 	cat out/dep-graph.txt | dot -Txdot -o out/dep-graph.dot
 
 ######### Helm charts - start #########
@@ -158,11 +124,11 @@ helm-template: ## Helm template for Tinkerbell
 ######### Build container images - start #########
 .PHONY: build-image
 build-image: $(GORELEASER) ## Build the container images
-	$(GORELEASER) release --clean --skip=sign --verbose
+	$(GORELEASER) release --clean --skip=sign --skip=publish --verbose
 
 .PHONY: build-image-push
 build-image-push: $(GORELEASER) ## Build and push the container images
-	GORELEASER_CURRENT_TAG=$(GIT_TAG) GORELEASER_PREVIOUS_TAG=$(GIT_PREV_TAG) $(GORELEASER) release --clean --skip=validate --skip=sign ${GORELEASER_EXTRA_FLAGS}
+	$(GORELEASER) release --clean --skip=validate --skip=sign ${GORELEASER_EXTRA_FLAGS}
 
 ######### Build container images - end   #########
 
@@ -178,65 +144,28 @@ clean-tools: ## Remove all tools
 clean-all: clean clean-tools ## Remove all binaries and tools
 
 ############## Tools ##############
-$(GOIMPORTS):
-	mkdir -p $(TOOLS_BIN_DIR)
-	GOBIN=$(TOOLS_BIN_DIR) go install golang.org/x/tools/cmd/goimports@$(GOIMPORT_VER)
-	@mv $(TOOLS_BIN_DIR)/goimports $(GOIMPORTS)
-
-$(CONTROLLER_GEN):
-	mkdir -p $(TOOLS_BIN_DIR)
-	GOBIN=$(TOOLS_BIN_DIR) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
-	@mv $(TOOLS_BIN_DIR)/controller-gen $(CONTROLLER_GEN)
-
-$(BUF):
-	mkdir -p $(TOOLS_BIN_DIR)
-	GOBIN=$(TOOLS_BIN_DIR) go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
-	@mv $(TOOLS_BIN_DIR)/buf $(BUF)
-
-$(UPX):
-	mkdir -p $(TOOLS_BIN_DIR)
-ifeq ($(shell uname),Darwin)
-	@echo "Downloading UPX for macOS (using amd64 with Rosetta 2 compatibility)..."
-	(cd $(TOOLS_BIN_DIR); curl -sSfLO https://github.com/upx/upx/releases/download/v$(UPX_VER)/upx-$(UPX_VER)-amd64_linux.tar.xz)
-	(cd $(TOOLS_BIN_DIR); tar -xf upx-$(UPX_VER)-amd64_linux.tar.xz)
-	@chmod +x $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-amd64_linux/upx
-	@mv $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-amd64_linux/upx $(UPX)
-	@rm -rf $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-amd64_linux*
-else
-	(cd $(TOOLS_BIN_DIR); curl -sSfLO https://github.com/upx/upx/releases/download/v$(UPX_VER)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux.tar.xz)
-	(cd $(TOOLS_BIN_DIR); tar -xf upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux.tar.xz)
-	@mv $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux/upx $(UPX)
-	@rm -rf $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux*
-endif
 
 $(GORELEASER):
 	mkdir -p $(TOOLS_BIN_DIR)
 	GOBIN=$(TOOLS_BIN_DIR) go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VER)
 	@mv $(TOOLS_BIN_DIR)/goreleaser $(GORELEASER)
 
+$(GOLANGCI_LINT):
+	mkdir -p $(TOOLS_BIN_DIR)
+	GOBIN=$(TOOLS_BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@mv $(TOOLS_BIN_DIR)/golangci-lint $(GOLANGCI_LINT)
+
 .PHONY: tools
-tools: $(GOIMPORTS) $(CONTROLLER_GEN) $(PROTOC_GEN_GO_GRPC) $(PROTOC_GEN_GO) $(BUF) $(UPX) $(GODEPGRAPH) $(GORELEASER) ## Install all tools
+tools: $(GORELEASER) $(GOLANGCI_LINT) ## Install all tools
 
 ############## Linting ##############
 .PHONY: lint
 lint: _lint  ## Run linting
 
-LINT_ARCH := $(shell uname -m)
-LINT_OS := $(shell uname)
-LINT_OS_LOWER := $(shell echo $(LINT_OS) | tr '[:upper:]' '[:lower:]')
-LINT_ROOT := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
-
-# shellcheck and hadolint lack arm64 native binaries: rely on x86-64 emulation
-ifeq ($(LINT_OS),Darwin)
-	ifeq ($(LINT_ARCH),arm64)
-		LINT_ARCH=x86_64
-	endif
-endif
-
 LINTERS :=
 FIXERS :=
 
-GOLANGCI_LINT_CONFIG := $(LINT_ROOT)/.golangci.yml
+GOLANGCI_LINT_CONFIG := .golangci.yml
 LINTERS += golangci-lint-lint
 golangci-lint-lint: $(GOLANGCI_LINT)
 	find $(PWD) -name go.mod -not -path "./out/*" -execdir sh -c '"$(GOLANGCI_LINT)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'

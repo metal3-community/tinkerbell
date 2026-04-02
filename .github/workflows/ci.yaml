@@ -48,11 +48,6 @@ jobs:
           install-only: true
           version-file: .tool-versions
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .tool-versions
-
       - name: Run go mod tidy
         run: go mod tidy
 
@@ -63,6 +58,13 @@ jobs:
 
       - name: Check for changes
         run: git diff --compact-summary --exit-code
+
+      - name: Check for new files
+        run: |
+          if git status --porcelain | grep -qE '^(\?\?|A )'; then
+            echo "Error: new files present (untracked or staged)" >&2
+            exit 1
+          fi
 
   validation:
     runs-on: ubuntu-latest
@@ -78,8 +80,11 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Run all CI checks, linting, tests, etc
-        run: make ci TEST_ARGS="-count=1"
+      - name: Run Tests
+        if: always()
+        run: go tool gotestsum --junitfile junit.xml -- -coverprofile=coverage.txt -covermode=atomic -race -count=1 -v ./...
+        env:
+          CGO_ENABLED: 1
 
       - name: Generate HTML coverage report
         if: always()
@@ -93,11 +98,18 @@ jobs:
           path: |
             coverage.txt
             coverage.html
+            junit.xml
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: upload to codecov
         uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   validate-helm-chart:
     runs-on: ubuntu-latest
@@ -164,19 +176,17 @@ jobs:
 
       - name: Set up GoReleaser environment variables
         id: goreleaser-env
-        env:
-          GITHUB_REF: ${{ github.ref }}
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "args='release --clean'" >> $GITHUB_OUTPUT
-          elif [[ "${GITHUB_REF}" == refs/heads/main ]]; then
-            echo "args='release --clean --skip=validate'" >> $GITHUB_OUTPUT
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "args=release --clean" >> "$GITHUB_OUTPUT"
+            echo "IS_RELEASE=true" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            echo "args=release --clean --skip=validate" >> "$GITHUB_OUTPUT"
+            echo "IS_RELEASE=false" >> "$GITHUB_ENV"
           else
-            echo "args='build --clean --skip=validate'" >> $GITHUB_OUTPUT
+            echo "args=build --clean --skip=validate" >> "$GITHUB_OUTPUT"
+            echo "IS_RELEASE=false" >> "$GITHUB_ENV"
           fi
-          echo "GORELEASER_CURRENT_TAG=${GORELEASER_CURRENT_TAG}" >> $GITHUB_ENV
-          echo "GORELEASER_PREVIOUS_TAG=$(git describe --tags --abbrev=0 --match="v*" $(git describe --tags --abbrev=0 --match="v*" 2>/dev/null || true)^ 2>/dev/null || true)" >> $GITHUB_ENV
-          echo "IS_RELEASE=${{ startsWith(github.ref, 'refs/tags/v') }}" >> $GITHUB_ENV
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

@@ -4,6 +4,11 @@ env:
   - REGISTRY={{ envOrDefault "REGISTRY" "ghcr.io" }}
   - IS_RELEASE={{ envOrDefault "IS_RELEASE" "false" }}
 
+git:
+  ignore_tags:
+    - api/v*
+    - legacy-tink-v*
+
 builds:
   - id: tinkerbell
     env: ["CGO_ENABLED=0"]

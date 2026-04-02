@@ -18,13 +18,8 @@ endif
 
 # Tool fully qualified paths
 UI_TOOLS_DIR := $(CURDIR)/out/tools
-UI_TEMPL_FQP := $(UI_TOOLS_DIR)/templ-$(UI_TEMPL_VER)
+UI_TEMPL_FQP := go tool templ
 UI_BUN_FQP := $(UI_TOOLS_DIR)/bun-$(UI_BUN_VER)
-
-# Install templ tool
-$(UI_TEMPL_FQP):
-	GOBIN=$(UI_TOOLS_DIR) go install github.com/a-h/templ/cmd/templ@$(UI_TEMPL_VER)
-	@mv $(UI_TOOLS_DIR)/templ $(UI_TEMPL_FQP)
 
 # Install bun tool
 $(UI_BUN_FQP):
@@ -35,7 +30,7 @@ $(UI_BUN_FQP):
 	@rm -rf $(UI_TOOLS_DIR)/bun-$(UI_OS)-$(UI_BUN_ARCH) $(UI_TOOLS_DIR)/bun-$(UI_BUN_VER).zip
 
 .PHONY: ui-install-deps
-ui-install-deps: $(UI_TEMPL_FQP) $(UI_BUN_FQP) ## Install UI dependencies (bun packages and templ)
+ui-install-deps: $(UI_BUN_FQP) ## Install UI dependencies (bun packages and templ)
 	(cd ui && $(UI_BUN_FQP) install)
 
 .PHONY: ui-css
@@ -47,8 +42,8 @@ ui-css-watch: $(UI_BUN_FQP) ## Watch and rebuild UI CSS on changes
 	(cd ui && $(UI_BUN_FQP) run tailwindcss -i assets/css/input.css -o assets/css/output.css --watch)
 
 .PHONY: ui-templ
-ui-templ: $(UI_TEMPL_FQP) ## Generate templ templates
-	(cd ui/templates && $(UI_TEMPL_FQP) generate)
+ui-templ: ## Generate templ templates
+	$(UI_TEMPL_FQP) generate -path ./ui/templates
 
 .PHONY: ui-generate
 ui-generate: ui-install-deps ui-css ui-templ ## Generate all UI files (templ templates and tailwind CSS)

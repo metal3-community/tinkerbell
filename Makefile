@@ -66,20 +66,11 @@ GORELEASER_BIN := goreleaser
 TOOLS_BIN_DIR := $(abspath bin)
 
 # Tool binaries with versions
-GOIMPORTS_BIN := goimports
-GOIMPORTS := $(TOOLS_BIN_DIR)/$(GOIMPORTS_BIN)-$(GOIMPORT_VER)
-CONTROLLER_GEN_BIN := controller-gen
-CONTROLLER_GEN := $(TOOLS_BIN_DIR)/$(CONTROLLER_GEN_BIN)-$(CONTROLLER_GEN_VERSION)
+CONTROLLER_GEN := go tool controller-gen
 BUF_BIN := buf
 BUF := $(TOOLS_BIN_DIR)/$(BUF_BIN)-$(BUF_VERSION)
-PROTOC_GEN_GO_GRPC_BIN := protoc-gen-go-grpc
-PROTOC_GEN_GO_GRPC := $(TOOLS_BIN_DIR)/$(PROTOC_GEN_GO_GRPC_BIN)-$(PROTOC_GEN_GO_GRPC_VER)
-PROTOC_GEN_GO_BIN := protoc-gen-go
-PROTOC_GEN_GO := $(TOOLS_BIN_DIR)/$(PROTOC_GEN_GO_BIN)-$(PROTOC_GEN_GO_VER)
-UPX_BIN := upx
-UPX := $(TOOLS_BIN_DIR)/$(UPX_BIN)-$(UPX_VER)-$(LOCAL_ARCH)
 GODEPGRAPH_BIN := godepgraph
-GODEPGRAPH := $(TOOLS_BIN_DIR)/$(GODEPGRAPH_BIN)-$(GODEPGRAPH_VER)
+GODEPGRAPH := go tool godepgraph
 GORELEASER := $(TOOLS_BIN_DIR)/$(GORELEASER_BIN)-$(GORELEASER_VER)
 #######################################
 ######### Container images variable #########
@@ -114,9 +105,8 @@ vet: ## Run go vet
 	go vet ./...
 
 .PHONY: fmt
-fmt: $(GOIMPORTS) ## Run go fmt
-	go fmt ./...
-	$(GOIMPORTS) -w .
+fmt: $(GOLANGCI_LINT) ## Run go fmt
+	$(GOLANGCI_LINT) fmt ./...
 
 FILE_TO_NOT_INCLUDE_IN_COVERAGE := script/version/main.go|*.pb.go|zz_generated.deepcopy.go|facility_string.go|severity_string.go|*_templ.go
 
@@ -149,18 +139,18 @@ smee/internal/syslog/severity_string.go: smee/internal/syslog/message.go
 	$(GOIMPORTS) -w .
 
 .PHONY: generate-proto
-generate-proto: $(BUF) $(PROTOC_GEN_GO_GRPC) $(PROTOC_GEN_GO) ## Generate code from proto files.
+generate-proto: $(BUF) ## Generate code from proto files.
 	$(BUF) generate
 	$(MAKE) fmt
 
 # Kubernetes CRD generation
 .PHONY: manifests
-manifests: $(CONTROLLER_GEN) ## Generate WebhookConfiguration and CustomResourceDefinition objects.
+manifests: ## Generate WebhookConfiguration and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) crd webhook paths="./..." output:crd:artifacts:config=crd/bases
 	$(MAKE) fmt
 
 .PHONY: generate
-generate: $(CONTROLLER_GEN) ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="script/boilerplate.go.txt" paths="./..."
 	$(MAKE) fmt
 
@@ -168,7 +158,7 @@ generate: $(CONTROLLER_GEN) ## Generate code containing DeepCopy, DeepCopyInto, 
 generate-all: generate generate-proto generate-go ui-generate manifests ## Run all code generation steps
 
 .PHONY: dep-graph
-dep-graph: $(GODEPGRAPH) ## Generate a dependency graph
+dep-graph: ## Generate a dependency graph
 	rm -rf out/dep-graph.txt out/dep-graph.png
 	$(GODEPGRAPH) -s -novendor -onlyprefixes "github.com/tinkerbell/tinkerbell,./cmd/agent,./cmd/tinkerbell" ./cmd/agent ./cmd/tinkerbell > out/dep-graph.txt
 	cat out/dep-graph.txt | dot -Txdot -o out/dep-graph.dot
@@ -226,16 +216,6 @@ $(CONTROLLER_GEN):
 	GOBIN=$(TOOLS_BIN_DIR) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 	@mv $(TOOLS_BIN_DIR)/controller-gen $(CONTROLLER_GEN)
 
-$(PROTOC_GEN_GO_GRPC):
-	mkdir -p $(TOOLS_BIN_DIR)
-	GOBIN=$(TOOLS_BIN_DIR) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VER)
-	@mv $(TOOLS_BIN_DIR)/protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC)
-
-$(PROTOC_GEN_GO):
-	mkdir -p $(TOOLS_BIN_DIR)
-	GOBIN=$(TOOLS_BIN_DIR) go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VER)
-	@mv $(TOOLS_BIN_DIR)/protoc-gen-go $(PROTOC_GEN_GO)
-
 $(BUF):
 	mkdir -p $(TOOLS_BIN_DIR)
 	GOBIN=$(TOOLS_BIN_DIR) go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
@@ -256,11 +236,6 @@ else
 	@mv $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux/upx $(UPX)
 	@rm -rf $(TOOLS_BIN_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux*
 endif
-
-$(GODEPGRAPH):
-	mkdir -p $(TOOLS_BIN_DIR)
-	GOBIN=$(TOOLS_BIN_DIR) go install github.com/kisielk/godepgraph@$(GODEPGRAPH_VER)
-	@mv $(TOOLS_BIN_DIR)/godepgraph $(GODEPGRAPH)
 
 $(GORELEASER):
 	mkdir -p $(TOOLS_BIN_DIR)

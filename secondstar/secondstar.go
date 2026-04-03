@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
-	"path"
 	"time"
 
 	gssh "github.com/gliderlabs/ssh"
@@ -66,7 +65,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 
 // HostKeyFrom reads a host key from a file and returns a signer.
 func HostKeyFrom(filePath string) (ssh.Signer, error) {
-	hostKey, err := os.ReadFile(path.Clean(filePath))
+	hostKey, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("error reading host key: %w", err)
 	}

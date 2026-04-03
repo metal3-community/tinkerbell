@@ -37,7 +37,6 @@ var file_workflow_service_proto_goTypes = []any{
 	(*ActionResponse)(nil),       // 2: proto.ActionResponse
 	(*ActionStatusResponse)(nil), // 3: proto.ActionStatusResponse
 }
-
 var file_workflow_service_proto_depIdxs = []int32{
 	0, // 0: proto.WorkflowService.GetAction:input_type -> proto.ActionRequest
 	1, // 1: proto.WorkflowService.ReportActionStatus:input_type -> proto.ActionStatusRequest

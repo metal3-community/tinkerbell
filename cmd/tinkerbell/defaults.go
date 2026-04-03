@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/tinkerbell/tinkerbell/smee"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -19,6 +20,8 @@ const (
 	defaultHTTPPort                = 7080
 	defaultHTTPSPort               = 7443
 	defaultTinkServerPort          = 42113
+	patternIPXEBinary              = smee.IPXEBinaryPattern
+	patternIPXEScript              = smee.IPXEScriptPattern
 )
 
 func detectPublicIPv4() netip.Addr {

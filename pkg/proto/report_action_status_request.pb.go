@@ -313,14 +313,16 @@ func file_report_action_status_request_proto_rawDescGZIP() []byte {
 	return file_report_action_status_request_proto_rawDescData
 }
 
-var file_report_action_status_request_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_report_action_status_request_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_report_action_status_request_proto_goTypes = []any{
-	(ActionStatusRequest_StateType)(0), // 0: proto.ActionStatusRequest.StateType
-	(*ActionStatusRequest)(nil),        // 1: proto.ActionStatusRequest
-	(*ActionMessage)(nil),              // 2: proto.ActionMessage
-	(*timestamppb.Timestamp)(nil),      // 3: google.protobuf.Timestamp
-}
+var (
+	file_report_action_status_request_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+	file_report_action_status_request_proto_msgTypes  = make([]protoimpl.MessageInfo, 2)
+	file_report_action_status_request_proto_goTypes   = []any{
+		(ActionStatusRequest_StateType)(0), // 0: proto.ActionStatusRequest.StateType
+		(*ActionStatusRequest)(nil),        // 1: proto.ActionStatusRequest
+		(*ActionMessage)(nil),              // 2: proto.ActionMessage
+		(*timestamppb.Timestamp)(nil),      // 3: google.protobuf.Timestamp
+	}
+)
 var file_report_action_status_request_proto_depIdxs = []int32{
 	0, // 0: proto.ActionStatusRequest.action_state:type_name -> proto.ActionStatusRequest.StateType
 	3, // 1: proto.ActionStatusRequest.execution_start:type_name -> google.protobuf.Timestamp

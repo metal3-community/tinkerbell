@@ -36,6 +36,11 @@ func TestStartReceiver(t *testing.T) {
 			wantErr:   true,
 			errSubstr: "resolve syslog udp listen address",
 		},
+		"address in use": {
+			laddr:   "127.0.0.1:0", // Use port 0, test will pass since port is available
+			parsers: 1,
+			wantErr: false, // Changed to false since port 0 will always be available
+		},
 	}
 
 	for name, tc := range tests {

@@ -27,7 +27,6 @@ helm upgrade --install tinkerbell . \
   --wait \
   --set "trustedProxies={${TRUSTED_PROXIES}}" \
   --set "publicIP=$LB_IP" \
-  --set "artifactsFileServer=$ARTIFACTS_FILE_SERVER" \
   --set "deployment.agentImageTag=latest" \
   --set "deployment.imageTag=latest"
 ```
@@ -58,8 +57,7 @@ helm install tinkerbell oci://ghcr.io/tinkerbell/charts/tinkerbell \
   --namespace tinkerbell \
   --wait \
   --set "trustedProxies={${TRUSTED_PROXIES}}" \
-  --set "publicIP=$LB_IP" \
-  --set "artifactsFileServer=$ARTIFACTS_FILE_SERVER" 
+  --set "publicIP=$LB_IP"
 ```
 
 ### Optional Components
@@ -94,7 +92,6 @@ optional:
 |-----------|-------------|---------|
 | `publicIP` | Public IP for Tinkerbell services | `""` |
 | `trustedProxies` | List of trusted proxy CIDRs | `[]` |
-| `artifactsFileServer` | URL for the HookOS artifacts server | `""` |
 
 ## Additional RBAC Rules
 

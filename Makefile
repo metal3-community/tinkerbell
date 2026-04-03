@@ -4,24 +4,6 @@
 SHELL := bash
 .SHELLFLAGS := -o pipefail -euc
 
-# Detect if running on macOS and if Homebrew is installed; check for GNU Make and GNU coreutils/findutils/sed/tar
-ifeq ($(shell uname), Darwin)
-  MAKE_VERSION := $(shell $(MAKE) -v | awk '/GNU Make/ {print $$3}')
-  ifeq ($(shell expr $(MAKE_VERSION) \< 4), 1)
-    $(error "GNU Make 4.x is required (Current version: $(MAKE_VERSION)) Install it via Homebrew with 'brew install make' and use 'gmake' instead of 'make'.")
-  endif
-  ifneq ($(shell command -v brew 2>/dev/null), "")
-    HOMEBREW_PREFIX := $(shell brew --prefix)
-    PATH := $(HOMEBREW_PREFIX)/opt/coreutils/libexec/gnubin:$(HOMEBREW_PREFIX)/opt/gnu-sed/libexec/gnubin:$(HOMEBREW_PREFIX)/opt/gnu-tar/libexec/gnubin:$(HOMEBREW_PREFIX)/opt/findutils/libexec/gnubin:$(PATH)
-  endif
-endif
-
-GIT_TAG := $(shell git describe --tags --abbrev=0 --match="v*" 2>/dev/null || true)
-ifeq ($(GIT_TAG),)
-	GIT_TAG := v0.0.0
-else
-	GIT_PREV_TAG := $(shell git describe --tags --abbrev=0 --match="v*" $(GIT_TAG)^ 2>/dev/null || true)
-endif
 VERSION ?=
 ifeq ($(VERSION),)
 	VERSION := $(shell go run --buildvcs=true ./script/version/)
@@ -34,7 +16,6 @@ HELM_REPO_NAME ?= ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts
 
 ########### Tools variables ###########
 # Tool versions
-GODEPGRAPH_VER 	       := v0.0.0-20240411160502-0f324ca7e282
 GOLANGCI_LINT_VERSION  := v2.11.2
 
 GORELEASER_VER := v2.12.2

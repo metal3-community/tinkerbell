@@ -43,7 +43,8 @@ Before you begin the migration process, ensure you have the following:
      --show-only="templates/migration/from-0.6.2.yaml" \
      --set "optional.migration.enabled=true" \
      --set "trustedProxies={${TRUSTED_PROXIES}}" \
-     --set "publicIP=$LB_IP"  > migrated_values.yaml
+     --set "publicIP=$LB_IP" \
+     --set "artifactsFileServer=$ARTIFACTS_FILE_SERVER" > migrated_values.yaml
    ```
 
 1. Follow the [Helm chart installation guide](/helm/tinkerbell/README.md) using the generated `migrated_values.yaml` file to install the Tinkerbell chart `v0.19.x`. This file contains the updated values that are compatible with the new chart version.

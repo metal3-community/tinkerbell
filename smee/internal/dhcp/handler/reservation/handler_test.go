@@ -763,8 +763,7 @@ func TestHandle(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Get loopback interface - handle platform differences (lo on Linux, lo0 on macOS/BSD)
-			n, err := nettest.LoopbackInterface()
+			n, err := net.InterfaceByName("lo")
 			if err != nil {
 				t.Fatal(err)
 			}

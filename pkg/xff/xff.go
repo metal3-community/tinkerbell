@@ -123,11 +123,11 @@ func toMasks(ips []string) (masks []net.IPNet, err error) {
 		var network *net.IPNet
 		_, network, err = net.ParseCIDR(cidr)
 		if err != nil {
-			return masks, err
+			return
 		}
 		masks = append(masks, *network)
 	}
-	return masks, err
+	return
 }
 
 // checks that the IP is allowed.

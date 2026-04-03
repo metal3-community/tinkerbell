@@ -4,6 +4,11 @@ env:
   - REGISTRY={{ envOrDefault "REGISTRY" "ghcr.io" }}
   - IS_RELEASE={{ envOrDefault "IS_RELEASE" "false" }}
 
+git:
+  ignore_tags:
+    - api/v*
+    - legacy-tink-v*
+
 builds:
   - id: tinkerbell
     env: ["CGO_ENABLED=0"]
@@ -71,6 +76,9 @@ release:
 snapshot:
   version_template: "{{ .Version }}-next"
 
+changelog:
+  disable: '{{ if eq .Env.IS_RELEASE "true" }}false{{ else }}true{{ end }}'
+
 dockers_v2:
   - id: tinkerbell
     dockerfile: Dockerfile.tinkerbell
@@ -96,8 +104,7 @@ dockers_v2:
       - '{{ .Env.REGISTRY }}/{{ envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git") }}'
     tags:
       - '{{ if eq .Env.IS_RELEASE "true" }}v{{ .Version }}-embedded{{ end }}'
-      - "{{ if .IsNightly }}edge-embedded{{ end }}"
-      - "{{ if not .IsNightly }}latest-embedded{{ end }}"
+      - "{{ if .IsNightly }}edge{{ else }}latest{{ end }}-embedded"
       - '{{ if eq .Branch "main" }}embedded-sha-{{ .ShortCommit }}{{ end }}'
     labels:
       "org.opencontainers.image.created": "{{.Date}}"
@@ -112,8 +119,7 @@ dockers_v2:
       - '{{ .Env.REGISTRY }}/{{ trimsuffix (envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git")) .ProjectName }}tink-agent'
     tags:
       - '{{ if eq .Env.IS_RELEASE "true" }}v{{ .Version }}{{ end }}'
-      - "{{ if .IsNightly }}edge{{ end }}"
-      - "{{ if not .IsNightly }}latest{{ end }}"
+      - "{{ if .IsNightly }}edge{{ else }}latest{{ end }}"
       - '{{ if eq .Branch "main" }}sha-{{ .ShortCommit }}{{ end }}'
     labels:
       "org.opencontainers.image.created": "{{.Date}}"

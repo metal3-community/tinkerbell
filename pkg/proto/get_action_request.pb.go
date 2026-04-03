@@ -1037,22 +1037,24 @@ func file_get_action_request_proto_rawDescGZIP() []byte {
 	return file_get_action_request_proto_rawDescData
 }
 
-var file_get_action_request_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
-var file_get_action_request_proto_goTypes = []any{
-	(*ActionRequest)(nil),   // 0: proto.ActionRequest
-	(*AgentAttributes)(nil), // 1: proto.AgentAttributes
-	(*CPU)(nil),             // 2: proto.CPU
-	(*Processor)(nil),       // 3: proto.Processor
-	(*Memory)(nil),          // 4: proto.Memory
-	(*Block)(nil),           // 5: proto.Block
-	(*Network)(nil),         // 6: proto.Network
-	(*PCI)(nil),             // 7: proto.PCI
-	(*GPU)(nil),             // 8: proto.GPU
-	(*Chassis)(nil),         // 9: proto.Chassis
-	(*BIOS)(nil),            // 10: proto.BIOS
-	(*Baseboard)(nil),       // 11: proto.Baseboard
-	(*Product)(nil),         // 12: proto.Product
-}
+var (
+	file_get_action_request_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+	file_get_action_request_proto_goTypes  = []any{
+		(*ActionRequest)(nil),   // 0: proto.ActionRequest
+		(*AgentAttributes)(nil), // 1: proto.AgentAttributes
+		(*CPU)(nil),             // 2: proto.CPU
+		(*Processor)(nil),       // 3: proto.Processor
+		(*Memory)(nil),          // 4: proto.Memory
+		(*Block)(nil),           // 5: proto.Block
+		(*Network)(nil),         // 6: proto.Network
+		(*PCI)(nil),             // 7: proto.PCI
+		(*GPU)(nil),             // 8: proto.GPU
+		(*Chassis)(nil),         // 9: proto.Chassis
+		(*BIOS)(nil),            // 10: proto.BIOS
+		(*Baseboard)(nil),       // 11: proto.Baseboard
+		(*Product)(nil),         // 12: proto.Product
+	}
+)
 var file_get_action_request_proto_depIdxs = []int32{
 	1,  // 0: proto.ActionRequest.agent_attributes:type_name -> proto.AgentAttributes
 	2,  // 1: proto.AgentAttributes.cpu:type_name -> proto.CPU

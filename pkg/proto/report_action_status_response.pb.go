@@ -78,10 +78,12 @@ func file_report_action_status_response_proto_rawDescGZIP() []byte {
 	return file_report_action_status_response_proto_rawDescData
 }
 
-var file_report_action_status_response_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
-var file_report_action_status_response_proto_goTypes = []any{
-	(*ActionStatusResponse)(nil), // 0: proto.ActionStatusResponse
-}
+var (
+	file_report_action_status_response_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+	file_report_action_status_response_proto_goTypes  = []any{
+		(*ActionStatusResponse)(nil), // 0: proto.ActionStatusResponse
+	}
+)
 var file_report_action_status_response_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
 	0, // [0:0] is the sub-list for method input_type

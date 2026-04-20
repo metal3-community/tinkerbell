@@ -91,13 +91,14 @@ function create_checksums() {
 # push a new branch to GitHub
 function push_new_branch_to_github() {
     local branch="${1}"
-    local repository="${2:-${GITHUB_REPOSITORY:-tinkerbell/tinkerbell}}"
-    local git_actor="${3:-github-actions[bot]}"
-    local token="${4:-${GITHUB_TOKEN}}"
+    local base="${2:-${GITHUB_REF_NAME:-main}}"
+    local repository="${3:-${GITHUB_REPOSITORY:-tinkerbell/tinkerbell}}"
+    local git_actor="${4:-github-actions[bot]}"
+    local token="${5:-${GITHUB_TOKEN}}"
 
     # only push if there are no changes from main
-    if ! git diff --quiet main; then
-        echo "Changes detected from main, not pushing"
+    if ! git diff --quiet "${base}"; then
+        echo "Changes detected from ${base}, not pushing"
         exit 1
     fi
 
@@ -114,6 +115,7 @@ function push_new_branch_to_github() {
 # create a new branch
 function create_branch() {
     local branch="${1:-update_iPXE_$(date +"%Y_%m_%d_%H_%M_%S")}"
+    local base="${2:-${GITHUB_REF_NAME:-main}}"
 
     # create a new branch
     if ! git checkout -b "${branch}"; then
@@ -121,7 +123,7 @@ function create_branch() {
         exit 1
     fi
     # push the new branch to GitHub
-    if ! push_new_branch_to_github "${branch}"; then
+    if ! push_new_branch_to_github "${branch}" "${base}"; then
         echo "Failed to push branch ${branch} to GitHub" 1>&2
         exit 1
     fi
@@ -131,7 +133,7 @@ function create_branch() {
 # create Github Pull Request
 function create_pull_request() {
     local branch="$1"
-    local base="${2:-main}"
+    local base="${2:-${GITHUB_REF_NAME:-main}}"
     local title="${3:-Update iPXE binaries}"
     local body="${4:-updated iPXE binaries}"
 
@@ -146,15 +148,18 @@ function create_pull_request() {
 function main() {
     local task="$1"
     local branch="$2"
-    local sha_file="$3"
+    local base="${3:-${5:-${GITHUB_REF_NAME:-main}}}"
+    local sha_file="$4"
 
     if [[ "${task}" == "build" ]]; then
+        # Usage: build [branch_placeholder] [base] [sha_file] [base_fallback]
+        sha_file="${sha_file:-./script/sha512sum.txt}"
         # Build iPXE binaries
         check_github_token
         changes_detected "${sha_file}"
         echo "Building iPXE binaries"
         branch="update_iPXE_$(date +"%Y_%m_%d_%H_%M_%S")"
-        create_branch "${branch}"
+        create_branch "${branch}" "${base}"
         clean_iPXE
         build_iPXE
         create_checksums "${sha_file}"
@@ -168,10 +173,15 @@ function main() {
     fi
 
     if [[ "${task}" == "pr" ]]; then
+        # Usage: pr <branch> [base]
+        if [[ -z "${branch}" ]]; then
+            echo "Missing required branch name for pr task" 1>&2
+            exit 1
+        fi
         echo "Creating pull request"
         # Create pull request
         check_github_token
-        create_pull_request "${branch}" "main" "Update iPXE binaries" "Automated iPXE binaries update."
+        create_pull_request "${branch}" "${base}" "Update iPXE binaries" "Automated iPXE binaries update."
         return 0
     fi
 
@@ -179,4 +189,4 @@ function main() {
     exit 1
 }
 
-main "${1:-build}" "${2:-}" "${3:-./script/sha512sum.txt}"
+main "${1:-build}" "${2:-}" "${3:-}" "${4:-./script/sha512sum.txt}" "${GITHUB_REF_NAME:-main}"

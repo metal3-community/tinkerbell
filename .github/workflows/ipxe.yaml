@@ -3,8 +3,10 @@ on:
   push:
     paths:
       - "smee/internal/ipxe/binary/file/script/**"
-    branches:
-      - main
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   build-ipxe:
@@ -21,7 +23,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IPXE_TARGET_GH_OWNER_REPO: ${{ github.repository }}
-        run: (cd smee/internal/ipxe/binary/file/; MAKEFLAGS=-j$(nproc) ./script/build_and_pr.sh build)
+        run: (cd smee/internal/ipxe/binary/file/; MAKEFLAGS=-j$(nproc) ./script/build_and_pr.sh build ${{ github.ref_name}})
       - name: Git commit and push changes
         if: ${{ steps.build_ipxe.outputs.new_binaries_built == 'true' }}
         uses: planetscale/ghcommit-action@v0.2.20
@@ -38,4 +40,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IPXE_TARGET_GH_OWNER_REPO: ${{ github.repository }}
-        run: (cd smee/internal/ipxe/binary/file/; MAKEFLAGS=-j$(nproc) ./script/build_and_pr.sh pr ${{ steps.build_ipxe.outputs.new_branch_name }})
+        run: (cd smee/internal/ipxe/binary/file/; MAKEFLAGS=-j$(nproc) ./script/build_and_pr.sh pr ${{ steps.build_ipxe.outputs.new_branch_name }} ${{ github.ref_name}})

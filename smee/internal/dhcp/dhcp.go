@@ -176,6 +176,13 @@ func IsRaspberryPI(mac net.HardwareAddr) bool {
 
 // Arch returns the Arch of the client pulled from DHCP option 93.
 func Arch(d *dhcpv4.DHCPv4) iana.Arch {
+	// if the mac address is from a Raspberry PI, use the Raspberry PI architecture.
+	// Some Raspberry PI's (Raspberry PI 5) report an option 93 of 0.
+	// This translates to iana.INTEL_X86PC and causes us to map to undionly.kpxe.
+	if IsRaspberryPI(d.ClientHWAddr) {
+		return iana.Arch(41)
+	}
+
 	// get option 93 ; arch
 	fwt := d.ClientArch()
 	if len(fwt) == 0 {
@@ -375,7 +382,7 @@ func (i Info) Bootfile(customUC UserClass, ipxeScript, ipxeHTTPBinServer *url.UR
 			paths = append([]string{macAddrFormat(i.Mac, i.MacAddrFormat)}, paths...)
 		}
 		bootfile = t.JoinPath(paths...).String()
-	case i.Arch == iana.UBOOT_ARM64 || i.Arch == iana.UBOOT_ARM32 || i.Arch == iana.Arch(41):
+	case i.Arch == iana.UBOOT_ARM64 || i.Arch == iana.UBOOT_ARM32:
 		bootfile = ""
 	default:
 		if i.IPXEBinary != "" {

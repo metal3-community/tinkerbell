@@ -95,8 +95,8 @@ deployment:
       httpScriptBindAddr: ""
       httpScriptEnabled: true
       httpScriptExtraKernelArgs: [] # Additional kernel arguments to pass to the OSIE. (k=v k=v) that are appended to the kernel cmdline in the iPXE script
-      httpScriptInitrdName: "initramfs-6.18.16" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
-      httpScriptKernelName: "vmlinuz-6.18.16" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
+      httpScriptInitrdName: "initramfs-trixie-full" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
+      httpScriptKernelName: "initramfs-trixie-full" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
       httpScriptOsieUrl: ""
       httpScriptRetries: 1
       httpScriptRetryDelay: 1
@@ -224,7 +224,7 @@ deployment:
   volumes:
     - name: captain-artifacts
       image:
-        reference: ghcr.io/tinkerbell/captain/artifacts:v0.1.0
+        reference: ghcr.io/rpardini/captain/artifacts:v0.0.0-0ab6603-trixie-full
         pullPolicy: PullIfNotPresent
 
   # - name: foo

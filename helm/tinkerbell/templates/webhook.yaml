@@ -1,0 +1,56 @@
+{{- if .Values.conversionWebhook.enabled }}
+# cert-manager-managed TLS for the CRD conversion webhook.
+#
+# The Issuer is a self-signed CA scoped to this namespace; the Certificate
+# provisions a Secret named `<release>-conversion-webhook-tls` that the
+# tinkerbell pod mounts as a volume. The CA bundle is injected into the
+# Hardware CRD via the `cert-manager.io/inject-ca-from` annotation that
+# tinkerbell's in-process migrator applies when --enable-conversion-webhook
+# is set with --conversion-webhook-service-name pointing at the Service
+# below.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.conversionWebhook.issuerName }}
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.conversionWebhook.certificateName }}
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  secretName: {{ .Values.conversionWebhook.secretName }}
+  duration: {{ .Values.conversionWebhook.certDuration | quote }}
+  renewBefore: {{ .Values.conversionWebhook.certRenewBefore | quote }}
+  dnsNames:
+    - {{ .Values.conversionWebhook.serviceName }}
+    - {{ .Values.conversionWebhook.serviceName }}.{{ .Release.Namespace }}
+    - {{ .Values.conversionWebhook.serviceName }}.{{ .Release.Namespace }}.svc
+    - {{ .Values.conversionWebhook.serviceName }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ .Values.conversionWebhook.issuerName }}
+    kind: Issuer
+---
+# Dedicated Service for the conversion webhook so that the apiserver can
+# reach the in-process webhook port without going through the main
+# tinkerbell Service (which exposes a different set of ports). It selects
+# the tinkerbell deployment pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.conversionWebhook.serviceName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: {{ include "tinkerbell.fullname" . }}-webhook
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "tinkerbell.fullname" . }}
+  ports:
+    - name: https
+      port: 443
+      targetPort: {{ .Values.conversionWebhook.containerPort }}
+      protocol: TCP
+{{- end }}

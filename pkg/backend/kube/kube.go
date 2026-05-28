@@ -80,6 +80,19 @@ func NewBackend(cfg Backend, opts ...cluster.Option) (*Backend, error) {
 		return nil, err
 	}
 
+	// Register v1alpha2 alongside v1alpha1 so the controller-runtime cache
+	// can serve either GVK. Indexers continue to register against
+	// v1alpha1 typed objects (see pkg/backend/kube/index.go); having the
+	// v1alpha2 group registered lets future consumers GET/LIST v1alpha2
+	// objects through the same cache without a parallel client.
+	if err := api.AddToSchemeTinkerbellV1Alpha2(rs); err != nil {
+		return nil, err
+	}
+
+	if err := api.AddToSchemeBMCV1Alpha2(rs); err != nil {
+		return nil, err
+	}
+
 	conf := func(o *cluster.Options) {
 		o.Scheme = rs
 		if cfg.Namespace != "" {

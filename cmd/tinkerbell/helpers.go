@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"path"
 	"strings"
 
@@ -8,6 +10,23 @@ import (
 	"github.com/tinkerbell/tinkerbell/pkg/backend/kube"
 	"k8s.io/client-go/rest"
 )
+
+// readCABundle loads a PEM-encoded CA bundle from disk and returns its
+// bytes. Callers pass it to crd.WithConversionWebhook so the kube
+// apiserver can validate the conversion webhook's TLS certificate.
+func readCABundle(filePath string) ([]byte, error) {
+	if filePath == "" {
+		return nil, fmt.Errorf("CA bundle file path is empty")
+	}
+	b, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading CA bundle %s: %w", filePath, err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("CA bundle %s is empty", filePath)
+	}
+	return b, nil
+}
 
 func ternary[T any](condition bool, valueIfTrue, valueIfFalse T) T {
 	if condition {

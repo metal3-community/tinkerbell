@@ -3,6 +3,7 @@ package crd
 import (
 	"context"
 	"embed"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -162,6 +163,129 @@ func WithLogger(logger logr.Logger) ConfigOption {
 	return func(t *Tinkerbell) {
 		t.Logger = logger
 	}
+}
+
+// WebhookClientConfig describes how the Kubernetes API server reaches the
+// conversion webhook. Exactly one of URL or Service must be set. Mirrors
+// apiextensions.k8s.io/v1.WebhookClientConfig but expressed as plain types
+// so callers don't have to import the apiextensions package.
+type WebhookClientConfig struct {
+	// URL gives the location of the webhook as a https:// URL. Use this for
+	// out-of-cluster setups (docker-compose dev) where there's no Service
+	// object. Mutually exclusive with Service.
+	URL string
+	// Service references an in-cluster Service. Use this for helm-deployed
+	// production where cert-manager + Service objects handle networking and
+	// TLS. Mutually exclusive with URL.
+	Service *WebhookServiceRef
+	// CABundle is the PEM-encoded CA bundle the apiserver uses to validate
+	// the webhook's TLS certificate. Required.
+	CABundle []byte
+}
+
+// WebhookServiceRef points at an in-cluster Service that fronts the
+// conversion webhook.
+type WebhookServiceRef struct {
+	Name      string
+	Namespace string
+	// Path on the webhook endpoint. Defaults to "/convert" when empty.
+	Path string
+	// Port the Service exposes. Defaults to 443 when nil.
+	Port *int32
+}
+
+// conversionCapableKinds is the set of CRD kinds for which a working
+// conversion webhook exists in this binary. Patching conversion=Webhook
+// onto a CRD without a corresponding ConvertTo/ConvertFrom would break the
+// apiserver's ability to read/write that resource, so we restrict
+// patching to this allowlist. As conversion handlers are added for more
+// kinds (Workflow, Job), append them here.
+var conversionCapableKinds = map[string]struct{}{
+	"hardware.tinkerbell.org": {},
+}
+
+// WithConversionWebhook patches the CRD set so that multi-version CRDs
+// (those listed in conversionCapableKinds) use the Webhook conversion
+// strategy with the provided client config. Must be applied AFTER
+// WithCRDs or the default load; if no CRDs are configured yet, the
+// default TinkerbellDefaults set is loaded first.
+func WithConversionWebhook(cfg WebhookClientConfig) ConfigOption {
+	return func(t *Tinkerbell) {
+		if t.CRDs == nil {
+			t.CRDs = TinkerbellDefaults
+		}
+		t.CRDs = patchConversionWebhook(t.CRDs, cfg)
+	}
+}
+
+// patchConversionWebhook returns a copy of in where each multi-version
+// CRD in conversionCapableKinds has its spec.conversion field set to
+// Webhook with the provided client config. Single-version CRDs and
+// kinds outside the allowlist pass through unmodified.
+func patchConversionWebhook(in map[string][]byte, cfg WebhookClientConfig) map[string][]byte {
+	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
+	out := make(map[string][]byte, len(in))
+	for name, raw := range in {
+		if _, ok := conversionCapableKinds[name]; !ok {
+			out[name] = raw
+			continue
+		}
+		u := &unstructured.Unstructured{}
+		if _, _, err := decoder.Decode(raw, nil, u); err != nil {
+			panic(fmt.Sprintf("patchConversionWebhook: decoding %s: %v", name, err))
+		}
+		versions, _, _ := unstructured.NestedSlice(u.Object, "spec", "versions")
+		if len(versions) <= 1 {
+			// Single-version CRD doesn't need conversion.
+			out[name] = raw
+			continue
+		}
+		conversion := map[string]any{
+			"strategy": "Webhook",
+			"webhook": map[string]any{
+				"conversionReviewVersions": []any{"v1"},
+				"clientConfig":             clientConfigToMap(cfg),
+			},
+		}
+		if err := unstructured.SetNestedMap(u.Object, conversion, "spec", "conversion"); err != nil {
+			panic(fmt.Sprintf("patchConversionWebhook: set conversion on %s: %v", name, err))
+		}
+		patched, err := u.MarshalJSON()
+		if err != nil {
+			panic(fmt.Sprintf("patchConversionWebhook: marshal %s: %v", name, err))
+		}
+		out[name] = patched
+	}
+	return out
+}
+
+func clientConfigToMap(cfg WebhookClientConfig) map[string]any {
+	out := map[string]any{}
+	if len(cfg.CABundle) > 0 {
+		// Apiextensions expects base64; unstructured marshaling handles
+		// base64 encoding of []byte fields natively when we round-trip
+		// via JSON, so we pass the bytes through as a base64 string.
+		out["caBundle"] = base64.StdEncoding.EncodeToString(cfg.CABundle)
+	}
+	if cfg.URL != "" {
+		out["url"] = cfg.URL
+	}
+	if cfg.Service != nil {
+		svc := map[string]any{
+			"name":      cfg.Service.Name,
+			"namespace": cfg.Service.Namespace,
+		}
+		if cfg.Service.Path != "" {
+			svc["path"] = cfg.Service.Path
+		} else {
+			svc["path"] = "/convert"
+		}
+		if cfg.Service.Port != nil {
+			svc["port"] = int64(*cfg.Service.Port)
+		}
+		out["service"] = svc
+	}
+	return out
 }
 
 // logrWarningHandler adapts a logr.Logger to the rest.WarningHandler interface.

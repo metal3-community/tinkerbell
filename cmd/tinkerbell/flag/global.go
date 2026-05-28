@@ -28,10 +28,14 @@ type GlobalConfig struct {
 	EnableRufio          bool
 	EnableSecondStar     bool
 	EnableUI             bool
-	EnableConversionWebhook bool
-	ConversionWebhookBindAddr string
-	ConversionWebhookCertFile string
-	ConversionWebhookKeyFile  string
+	EnableConversionWebhook           bool
+	ConversionWebhookBindAddr         string
+	ConversionWebhookCertFile         string
+	ConversionWebhookKeyFile          string
+	ConversionWebhookCABundleFile     string
+	ConversionWebhookURL              string
+	ConversionWebhookServiceName      string
+	ConversionWebhookServiceNamespace string
 	EnableCRDMigrations  bool
 	MaxprocsEnable       bool
 	MemlimitRatio        float64
@@ -81,6 +85,10 @@ func RegisterGlobal(fs *Set, gc *GlobalConfig) {
 	fs.Register(ConversionWebhookBindAddr, ffval.NewValueDefault(&gc.ConversionWebhookBindAddr, gc.ConversionWebhookBindAddr))
 	fs.Register(ConversionWebhookCertFile, ffval.NewValueDefault(&gc.ConversionWebhookCertFile, gc.ConversionWebhookCertFile))
 	fs.Register(ConversionWebhookKeyFile, ffval.NewValueDefault(&gc.ConversionWebhookKeyFile, gc.ConversionWebhookKeyFile))
+	fs.Register(ConversionWebhookCABundleFile, ffval.NewValueDefault(&gc.ConversionWebhookCABundleFile, gc.ConversionWebhookCABundleFile))
+	fs.Register(ConversionWebhookURL, ffval.NewValueDefault(&gc.ConversionWebhookURL, gc.ConversionWebhookURL))
+	fs.Register(ConversionWebhookServiceName, ffval.NewValueDefault(&gc.ConversionWebhookServiceName, gc.ConversionWebhookServiceName))
+	fs.Register(ConversionWebhookServiceNamespace, ffval.NewValueDefault(&gc.ConversionWebhookServiceNamespace, gc.ConversionWebhookServiceNamespace))
 	fs.Register(EnableCRDMigrations, ffval.NewValueDefault(&gc.EnableCRDMigrations, gc.EnableCRDMigrations))
 	fs.Register(LogLevelConfig, ffval.NewValueDefault(&gc.LogLevel, gc.LogLevel))
 	fs.Register(OTELEndpoint, ffval.NewValueDefault(&gc.OTELEndpoint, gc.OTELEndpoint))
@@ -238,6 +246,26 @@ var ConversionWebhookCertFile = Config{
 var ConversionWebhookKeyFile = Config{
 	Name:  "conversion-webhook-key-file",
 	Usage: "[conversion-webhook] path to the TLS private key (PEM)",
+}
+
+var ConversionWebhookCABundleFile = Config{
+	Name:  "conversion-webhook-ca-bundle-file",
+	Usage: "[conversion-webhook] path to the PEM-encoded CA bundle the kube apiserver should use to validate the webhook's TLS cert. Required when --enable-conversion-webhook=true to patch conversion=Webhook onto multi-version CRDs.",
+}
+
+var ConversionWebhookURL = Config{
+	Name:  "conversion-webhook-url",
+	Usage: "[conversion-webhook] https:// URL the apiserver should call to reach the webhook (for out-of-cluster setups). Mutually exclusive with --conversion-webhook-service-name.",
+}
+
+var ConversionWebhookServiceName = Config{
+	Name:  "conversion-webhook-service-name",
+	Usage: "[conversion-webhook] name of the in-cluster Service that fronts the webhook. Used with --conversion-webhook-service-namespace.",
+}
+
+var ConversionWebhookServiceNamespace = Config{
+	Name:  "conversion-webhook-service-namespace",
+	Usage: "[conversion-webhook] namespace of the Service named by --conversion-webhook-service-name.",
 }
 
 var BindAddr = Config{

@@ -304,6 +304,24 @@ trustedProxies: []
 # Enable creating the tinkerbell configmap
 createConfigmap: true
 
+# Conversion webhook configuration. When enabled, deploys a cert-manager
+# Issuer + Certificate + Service that the CRD conversion webhook uses to
+# translate Hardware objects between v1alpha1 and v1alpha2. Requires
+# cert-manager to be installed in the cluster.
+conversionWebhook:
+  enabled: false
+  serviceName: tinkerbell-conversion-webhook
+  issuerName: tinkerbell-conversion-webhook
+  certificateName: tinkerbell-conversion-webhook
+  secretName: tinkerbell-conversion-webhook-tls
+  # certDuration / certRenewBefore are passed verbatim to the cert-manager
+  # Certificate object. The defaults give a 90-day cert renewed at 60 days.
+  certDuration: 2160h
+  certRenewBefore: 720h
+  # containerPort is the port the tinkerbell pod's conversion webhook
+  # listens on. Must match --conversion-webhook-bind-addr (default :9443).
+  containerPort: 9443
+
 optional:
   # enable migration to convert a 0.6.2 values.yaml to a v0.19.x values.yaml.
   # See the migration documentation for more details.

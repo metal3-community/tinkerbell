@@ -338,7 +338,37 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 				return fmt.Errorf("failed to wait for API server health: %w", err)
 			}
 
-			tb, err := crd.NewTinkerbell(crd.WithLogger(cliLog), crd.WithRestConfig(backendNoIndexes.ClientConfig))
+			crdOpts := []crd.ConfigOption{
+				crd.WithLogger(cliLog),
+				crd.WithRestConfig(backendNoIndexes.ClientConfig),
+			}
+			// Configure conversion webhook on multi-version CRDs only when
+			// the in-process webhook server is enabled AND a CA bundle is
+			// available for the apiserver to validate the webhook's TLS cert.
+			// Without the CA bundle the apiserver would reject every
+			// conversion call, breaking reads/writes of multi-version
+			// resources — so we deliberately leave conversion=None until
+			// the cert plumbing is in place.
+			if globals.EnableConversionWebhook && globals.ConversionWebhookCABundleFile != "" {
+				cab, err := readCABundle(globals.ConversionWebhookCABundleFile)
+				if err != nil {
+					return fmt.Errorf("read CA bundle: %w", err)
+				}
+				cc := crd.WebhookClientConfig{CABundle: cab}
+				switch {
+				case globals.ConversionWebhookURL != "":
+					cc.URL = globals.ConversionWebhookURL
+				case globals.ConversionWebhookServiceName != "":
+					cc.Service = &crd.WebhookServiceRef{
+						Name:      globals.ConversionWebhookServiceName,
+						Namespace: globals.ConversionWebhookServiceNamespace,
+					}
+				default:
+					return fmt.Errorf("conversion webhook enabled with CA bundle but neither --conversion-webhook-url nor --conversion-webhook-service-name was set")
+				}
+				crdOpts = append(crdOpts, crd.WithConversionWebhook(cc))
+			}
+			tb, err := crd.NewTinkerbell(crdOpts...)
 			if err != nil {
 				return fmt.Errorf("failed to create CRD migrator: %w", err)
 			}

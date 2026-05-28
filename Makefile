@@ -60,6 +60,10 @@ dev-binary: ## Cross-compile tinkerbell into linux/$(DOCKER_BUILD_ARCH)/tinkerbe
 	@echo "dev binary: linux/$(DOCKER_BUILD_ARCH)/tinkerbell"
 	@echo "license stub: out/THIRD_PARTY_LICENSES-linux-$(DOCKER_BUILD_ARCH)"
 
+.PHONY: dev-webhook-cert
+dev-webhook-cert: ## Generate a self-signed CA + serving cert for the conversion webhook (dev only)
+	./script/dev-webhook-cert.sh
+
 .PHONY: dev-image
 dev-image: dev-binary ## Build the tinkerbell docker image for the host architecture
 	docker buildx build \

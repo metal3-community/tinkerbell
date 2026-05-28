@@ -37,6 +37,10 @@ type ProviderOptions struct {
 	// RPC contains the options to customize the RPC provider.
 	// +optional
 	RPC *RPCOptions `json:"rpc,omitempty"`
+
+	// HomeAssistant contains the options to customize the HomeAssistant provider.
+	// +optional
+	HomeAssistant *HomeAssistantOptions `json:"homeassistant,omitempty"`
 }
 
 // ProviderName is the bmclib specific provider name. Names are case insensitive.
@@ -166,4 +170,13 @@ type ExperimentalOpts struct {
 	// DotPath is the path to the json object where the bmclib RequestPayload{} struct will be embedded. For example: object.data.body
 	// +optional
 	DotPath string `json:"dotPath,omitempty"`
+}
+
+// HomeAssistantOptions has the config options for the Home Assistant provider. Make me better!
+type HomeAssistantOptions struct {
+	// SwitchEntityID is the entity ID of the Home Assistant switch entity to control power state
+	SwitchEntityID string `json:"switchEntityID"`
+	// PowerOperationDelaySeconds is the number of seconds to wait after a power operation before proceeding
+	// +optional
+	PowerOperationDelaySeconds uint32 `json:"powerOperationDelaySeconds,omitempty"`
 }

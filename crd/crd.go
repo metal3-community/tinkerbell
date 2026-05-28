@@ -49,8 +49,8 @@ const (
 // AvailableVersions lists all supported CRD API versions.
 var AvailableVersions = []string{"v1alpha1", "v1alpha2"}
 
-// TinkerbellDefaults contains all the v1alpha1 Tinkerbell CRDs.
-var TinkerbellDefaults = map[string][]byte{
+// TinkerbellV1Alpha1 contains the v1alpha1 Tinkerbell CRDs.
+var TinkerbellV1Alpha1 = map[string][]byte{
 	"hardware.tinkerbell.org":         mustReadCRD("bases/v1alpha1/tinkerbell.org_hardware.yaml"),
 	"templates.tinkerbell.org":        mustReadCRD("bases/v1alpha1/tinkerbell.org_templates.yaml"),
 	"workflows.tinkerbell.org":        mustReadCRD("bases/v1alpha1/tinkerbell.org_workflows.yaml"),
@@ -60,7 +60,7 @@ var TinkerbellDefaults = map[string][]byte{
 	"tasks.bmc.tinkerbell.org":        mustReadCRD("bases/v1alpha1/bmc.tinkerbell.org_tasks.yaml"),
 }
 
-// TinkerbellV1Alpha2 contains all the v1alpha2 Tinkerbell CRDs.
+// TinkerbellV1Alpha2 contains the v1alpha2 Tinkerbell CRDs.
 var TinkerbellV1Alpha2 = map[string][]byte{
 	"hardware.tinkerbell.org":  mustReadCRD("bases/v1alpha2/tinkerbell.org_hardware.yaml"),
 	"tasks.tinkerbell.org":     mustReadCRD("bases/v1alpha2/tinkerbell.org_tasks.yaml"),
@@ -70,10 +70,82 @@ var TinkerbellV1Alpha2 = map[string][]byte{
 	"jobs.bmc.tinkerbell.org":  mustReadCRD("bases/v1alpha2/bmc.tinkerbell.org_jobs.yaml"),
 }
 
-// CRDsByVersion maps API version strings to their CRD source maps.
+// TinkerbellDefaults is the CRD set the migrator installs on startup. It is
+// computed at init time from TinkerbellV1Alpha1 + TinkerbellV1Alpha2: where
+// the same CRD name appears in both maps (hardware, workflows, jobs.bmc),
+// their spec.versions are merged so both versions stay served — v1alpha2
+// becomes the storage version, v1alpha1 is kept served with storage:false.
+// This makes v1alpha2 CRDs available to clients while the v1alpha1-typed
+// runtime (scheme, indexers, controllers) keeps working unchanged.
+//
+// CRDs that exist in only one map (templates, workflowrulesets, machines.bmc,
+// tasks.bmc on v1alpha1; bmcs, policies, tasks.tinkerbell.org on v1alpha2)
+// pass through with their single served+storage version intact.
+var TinkerbellDefaults = mergedCRDs()
+
+// CRDsByVersion maps API version strings to their CRD source maps. Used by
+// the UI to display version-specific resource listings.
 var CRDsByVersion = map[string]map[string][]byte{
-	"v1alpha1": TinkerbellDefaults,
+	"v1alpha1": TinkerbellV1Alpha1,
 	"v1alpha2": TinkerbellV1Alpha2,
+}
+
+// mergedCRDs combines TinkerbellV1Alpha1 and TinkerbellV1Alpha2 into a single
+// migrator-ready CRD set. CRDs present only in one map are passed through
+// unchanged. CRDs present in both maps are merged: the v1alpha1 versions[]
+// entries are appended to the v1alpha2 ones, with v1alpha1 marked
+// storage:false and v1alpha2 marked storage:true. Output is JSON []byte
+// (which is valid YAML) suitable for the existing decode-and-apply path in
+// Migrate.
+func mergedCRDs() map[string][]byte {
+	out := make(map[string][]byte, len(TinkerbellV1Alpha1)+len(TinkerbellV1Alpha2))
+	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
+
+	parse := func(raw []byte) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{}
+		if _, _, err := decoder.Decode(raw, nil, u); err != nil {
+			panic(fmt.Sprintf("decoding embedded CRD: %v", err))
+		}
+		return u
+	}
+	setStorage := func(versions []any, name string, storage bool) {
+		for _, v := range versions {
+			vm, _ := v.(map[string]any)
+			if vm["name"] == name {
+				vm["storage"] = storage
+			}
+		}
+	}
+
+	// Start with v1alpha2 (its storage:true will remain).
+	for name, raw := range TinkerbellV1Alpha2 {
+		out[name] = raw
+	}
+	for name, raw := range TinkerbellV1Alpha1 {
+		v2raw, hasV2 := out[name]
+		if !hasV2 {
+			// v1alpha1-only CRD; pass through.
+			out[name] = raw
+			continue
+		}
+		// Multi-version merge: append v1alpha1 versions[] to v1alpha2's, flip
+		// storage flags.
+		v1u := parse(raw)
+		v2u := parse(v2raw)
+		v1Versions, _, _ := unstructured.NestedSlice(v1u.Object, "spec", "versions")
+		v2Versions, _, _ := unstructured.NestedSlice(v2u.Object, "spec", "versions")
+		setStorage(v1Versions, "v1alpha1", false)
+		setStorage(v2Versions, "v1alpha2", true)
+		if err := unstructured.SetNestedSlice(v2u.Object, append(v2Versions, v1Versions...), "spec", "versions"); err != nil {
+			panic(fmt.Sprintf("merging CRD %s: %v", name, err))
+		}
+		merged, err := v2u.MarshalJSON()
+		if err != nil {
+			panic(fmt.Sprintf("marshaling merged CRD %s: %v", name, err))
+		}
+		out[name] = merged
+	}
+	return out
 }
 
 // ConfigOption is a function that sets a configuration option.

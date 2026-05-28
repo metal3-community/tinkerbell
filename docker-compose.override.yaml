@@ -1,0 +1,26 @@
+# docker-compose.override.yaml is an automatic override applied when running
+# `docker compose up`. This override scopes the stack down for local
+# integration testing on hosts (e.g. macOS Docker Desktop) where the
+# macvlan-based 02-dhcp-relay network cannot be created.
+#
+# The tinkerbell service drops its 02-dhcp-relay network attachment and
+# binds only to the default bridge so the rest of the stack
+# (etcd, kube-apiserver, kube-controller-manager, kubeconfig job)
+# still comes up.
+services:
+  tinkerbell:
+    networks:
+      01-tinkerbell_default:
+    # Pin to the locally-built dev image so docker compose doesn't re-pull
+    # the upstream image when the local one already exists.
+    image: ghcr.io/tinkerbell/tinkerbell:dev
+    pull_policy: never
+
+# Remove the macvlan network definition by re-declaring it as a no-op bridge.
+# A bridge driver doesn't need PARENT_INTERFACE, so the stack starts without
+# any env-var prerequisite. macvlan is only useful for real DHCP relay
+# integration on Linux hosts; for webhook/CRD integration testing on macOS
+# we don't need DHCP relay at all.
+networks:
+  02-dhcp-relay:
+    driver: bridge

@@ -31,6 +31,9 @@ bin/
 dist/
 /tinkerbell
 
+# Cross-compile output from `make dev-binary` (docker-compose build context)
+/linux/
+
 # Go coverage profile
 coverage.txt
 coverage-api.txt

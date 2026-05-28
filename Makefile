@@ -39,6 +39,40 @@ help: ## Print this help
 build: generate $(GORELEASER) ## Build the Tinkerbell and Tink Agent binaries
 	$(GORELEASER) build --clean --auto-snapshot
 
+# DOCKER_BUILD_ARCH selects the GOARCH for the binary baked into the
+# Dockerfile.tinkerbell build context. Defaults to the host's arch via
+# `uname -m`, mapped to GOARCH (arm64 / amd64).
+DOCKER_BUILD_ARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+
+# DOCKER_BUILD_IMAGE_TAG is the tag applied to the locally-built tinkerbell image.
+DOCKER_BUILD_IMAGE_TAG ?= ghcr.io/tinkerbell/tinkerbell:dev
+
+.PHONY: dev-binary
+dev-binary: ## Cross-compile tinkerbell into linux/$(DOCKER_BUILD_ARCH)/tinkerbell for docker-compose
+	@mkdir -p linux/$(DOCKER_BUILD_ARCH) out
+	GOOS=linux GOARCH=$(DOCKER_BUILD_ARCH) CGO_ENABLED=0 go build \
+		-ldflags="-s -w -X main.version=dev" \
+		-o linux/$(DOCKER_BUILD_ARCH)/tinkerbell ./cmd/tinkerbell
+	@if [ ! -s "out/THIRD_PARTY_LICENSES-linux-$(DOCKER_BUILD_ARCH)" ]; then \
+		printf "Third-party licenses are not generated in dev builds. Use 'make build' (goreleaser) for the licensed release artifact.\n" \
+			> out/THIRD_PARTY_LICENSES-linux-$(DOCKER_BUILD_ARCH); \
+	fi
+	@echo "dev binary: linux/$(DOCKER_BUILD_ARCH)/tinkerbell"
+	@echo "license stub: out/THIRD_PARTY_LICENSES-linux-$(DOCKER_BUILD_ARCH)"
+
+.PHONY: dev-image
+dev-image: dev-binary ## Build the tinkerbell docker image for the host architecture
+	docker buildx build \
+		--platform linux/$(DOCKER_BUILD_ARCH) \
+		--load \
+		--build-arg BINARY=tinkerbell \
+		-t $(DOCKER_BUILD_IMAGE_TAG) \
+		-f Dockerfile.tinkerbell .
+
+.PHONY: dev-compose-up
+dev-compose-up: dev-image ## Build and start the docker-compose dev stack
+	docker compose up --build
+
 TEST_PKG ?=
 TEST_PKGS :=
 ifeq ($(TEST_PKG),)

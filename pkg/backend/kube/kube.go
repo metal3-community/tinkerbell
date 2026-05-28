@@ -6,7 +6,10 @@ import (
 	"fmt"
 
 	"github.com/tinkerbell/tinkerbell/pkg/api"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -112,7 +115,50 @@ func NewBackend(cfg Backend, opts ...cluster.Option) (*Backend, error) {
 		return nil, fmt.Errorf("failed to create new cluster config: %w", err)
 	}
 
+	// Build a discovery client so we can skip indexers whose GVK isn't
+	// served by this apiserver. Required because Tinkerbell ships indexers
+	// for BOTH v1alpha1 and v1alpha2 (see IndexesV1Alpha2). A cluster
+	// running only v1alpha2 (e.g. after a migration) doesn't serve
+	// v1alpha1 Hardware — registering the v1alpha1 indexer would fail
+	// with "no matches for kind Hardware in version tinkerbell.org/v1alpha1".
+	// The reverse is true for clusters that haven't installed v1alpha2
+	// yet. Either case should be tolerated, not fatal.
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg.ClientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discovery client: %w", err)
+	}
 	for _, i := range cfg.Indexes {
+		gvks, _, gvkErr := rs.ObjectKinds(i.Obj)
+		if gvkErr != nil || len(gvks) == 0 {
+			// Scheme doesn't know about this object — that's a programmer
+			// error, not a missing CRD. Surface it.
+			return nil, fmt.Errorf("indexer %s: scheme lookup: %w", i.Field, gvkErr)
+		}
+		gvk := gvks[0]
+		resources, dErr := disco.ServerResourcesForGroupVersion(gvk.GroupVersion().String())
+		if dErr != nil {
+			if isNotFoundDiscoveryError(dErr) {
+				// Group/version not served at all; skip.
+				continue
+			}
+			return nil, fmt.Errorf("indexer %s: discovery for %s: %w", i.Field, gvk.GroupVersion(), dErr)
+		}
+		// Group/version exists, but the SPECIFIC kind may not — e.g. the
+		// cluster has tinkerbell.org/v1alpha2 (because Hardware is
+		// multi-version), but Workflow only exists at v1alpha1 (because
+		// the multi-version Workflow merge is deliberately disabled —
+		// see crd.conversionCapableKinds). Skip when the kind isn't
+		// in the discovered resource list.
+		found := false
+		for _, r := range resources.APIResources {
+			if r.Kind == gvk.Kind {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
 		if err := c.GetFieldIndexer().IndexField(context.Background(), i.Obj, i.Field, i.ExtractValue); err != nil {
 			return nil, fmt.Errorf("failed to setup indexer(%s): %w", i.Field, err)
 		}
@@ -159,6 +205,21 @@ func loadConfig(cfg Backend) (Backend, error) {
 }
 
 // Start starts the client-side cache.
+// isNotFoundDiscoveryError reports whether err from
+// discovery.ServerResourcesForGroupVersion indicates the requested
+// GroupVersion isn't served by the apiserver:
+//
+//   - apimeta.IsNoMatchError catches the RESTMapper "no matches for kind"
+//     form that propagates out of indexer registration too.
+//   - kerrors.IsNotFound catches the apiserver's plain 404 when
+//     /apis/<group>/<version> is absent.
+func isNotFoundDiscoveryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return apimeta.IsNoMatchError(err) || kerrors.IsNotFound(err)
+}
+
 func (b *Backend) Start(ctx context.Context) error {
 	return b.cluster.Start(ctx)
 }

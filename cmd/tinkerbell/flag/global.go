@@ -28,6 +28,10 @@ type GlobalConfig struct {
 	EnableRufio          bool
 	EnableSecondStar     bool
 	EnableUI             bool
+	EnableConversionWebhook bool
+	ConversionWebhookBindAddr string
+	ConversionWebhookCertFile string
+	ConversionWebhookKeyFile  string
 	EnableCRDMigrations  bool
 	MaxprocsEnable       bool
 	MemlimitRatio        float64
@@ -73,6 +77,10 @@ func RegisterGlobal(fs *Set, gc *GlobalConfig) {
 	fs.Register(EnableRufioController, ffval.NewValueDefault(&gc.EnableRufio, gc.EnableRufio))
 	fs.Register(EnableSecondStar, ffval.NewValueDefault(&gc.EnableSecondStar, gc.EnableSecondStar))
 	fs.Register(EnableUI, ffval.NewValueDefault(&gc.EnableUI, gc.EnableUI))
+	fs.Register(EnableConversionWebhook, ffval.NewValueDefault(&gc.EnableConversionWebhook, gc.EnableConversionWebhook))
+	fs.Register(ConversionWebhookBindAddr, ffval.NewValueDefault(&gc.ConversionWebhookBindAddr, gc.ConversionWebhookBindAddr))
+	fs.Register(ConversionWebhookCertFile, ffval.NewValueDefault(&gc.ConversionWebhookCertFile, gc.ConversionWebhookCertFile))
+	fs.Register(ConversionWebhookKeyFile, ffval.NewValueDefault(&gc.ConversionWebhookKeyFile, gc.ConversionWebhookKeyFile))
 	fs.Register(EnableCRDMigrations, ffval.NewValueDefault(&gc.EnableCRDMigrations, gc.EnableCRDMigrations))
 	fs.Register(LogLevelConfig, ffval.NewValueDefault(&gc.LogLevel, gc.LogLevel))
 	fs.Register(OTELEndpoint, ffval.NewValueDefault(&gc.OTELEndpoint, gc.OTELEndpoint))
@@ -210,6 +218,26 @@ var EnableETCD = Config{
 var EnableCRDMigrations = Config{
 	Name:  "enable-crd-migrations",
 	Usage: "create CRDs in the cluster",
+}
+
+var EnableConversionWebhook = Config{
+	Name:  "enable-conversion-webhook",
+	Usage: "serve the CRD conversion webhook for Hardware (v1alpha1 ↔ v1alpha2). Requires --conversion-webhook-{cert,key}-file.",
+}
+
+var ConversionWebhookBindAddr = Config{
+	Name:  "conversion-webhook-bind-addr",
+	Usage: "[conversion-webhook] host:port to bind the HTTPS server to",
+}
+
+var ConversionWebhookCertFile = Config{
+	Name:  "conversion-webhook-cert-file",
+	Usage: "[conversion-webhook] path to the TLS certificate (PEM)",
+}
+
+var ConversionWebhookKeyFile = Config{
+	Name:  "conversion-webhook-key-file",
+	Usage: "[conversion-webhook] path to the TLS private key (PEM)",
 }
 
 var BindAddr = Config{

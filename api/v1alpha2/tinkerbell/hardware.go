@@ -12,6 +12,9 @@ import (
 // +kubebuilder:printcolumn:JSONPath=".metadata.annotations['tinkerbell.org/disabled']",name="Disabled",type=string,priority=1
 
 // Hardware is the Schema for the Hardware API.
+//
+// This is the conversion hub: all other API versions of Hardware convert
+// through this type. See sigs.k8s.io/controller-runtime/pkg/conversion#Hub.
 type Hardware struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

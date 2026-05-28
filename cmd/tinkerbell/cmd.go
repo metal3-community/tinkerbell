@@ -16,6 +16,7 @@ import (
 	"github.com/peterbourgon/ff/v4/ffhelp"
 	"github.com/tinkerbell/tinkerbell/cmd/tinkerbell/flag"
 	"github.com/tinkerbell/tinkerbell/crd"
+	"github.com/tinkerbell/tinkerbell/pkg/conversionwebhook"
 	"github.com/tinkerbell/tinkerbell/pkg/build"
 	"github.com/tinkerbell/tinkerbell/pkg/otel"
 	"github.com/tinkerbell/tinkerbell/rufio"
@@ -49,6 +50,8 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		EnableRufio:          true,
 		EnableSecondStar:     true,
 		EnableUI:             true,
+		EnableConversionWebhook:    false,    // off by default; helm wires cert + service when enabled
+		ConversionWebhookBindAddr:  ":9443",  // standard CRD-conversion webhook port
 		EnableCRDMigrations:  true,
 		HTTPPort:             defaultHTTPPort,
 		HTTPSPort:            defaultHTTPSPort,
@@ -261,6 +264,26 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 	defer otelShutdown()
 
 	g, ctx := errgroup.WithContext(ctx)
+
+	// Conversion webhook (Hardware v1alpha1 ↔ v1alpha2). Off by default;
+	// enable via --enable-conversion-webhook once cert and key are wired
+	// up (see helm chart cert-manager Issuer/Certificate).
+	g.Go(func() error {
+		if !globals.EnableConversionWebhook {
+			cliLog.Info("conversion webhook is disabled")
+			return nil
+		}
+		srv, err := conversionwebhook.New(conversionwebhook.Config{
+			BindAddr: globals.ConversionWebhookBindAddr,
+			CertFile: globals.ConversionWebhookCertFile,
+			KeyFile:  globals.ConversionWebhookKeyFile,
+		}, cliLog.WithName("conversion-webhook"))
+		if err != nil {
+			return fmt.Errorf("conversion webhook config: %w", err)
+		}
+		return srv.Start(ctx)
+	})
+
 	// Etcd server
 	g.Go(func() error {
 		if !globals.EmbeddedGlobalConfig.EnableETCD {

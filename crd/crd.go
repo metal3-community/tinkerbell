@@ -92,12 +92,32 @@ var CRDsByVersion = map[string]map[string][]byte{
 }
 
 // mergedCRDs combines TinkerbellV1Alpha1 and TinkerbellV1Alpha2 into a single
-// migrator-ready CRD set. CRDs present only in one map are passed through
-// unchanged. CRDs present in both maps are merged: the v1alpha1 versions[]
-// entries are appended to the v1alpha2 ones, with v1alpha1 marked
-// storage:false and v1alpha2 marked storage:true. Output is JSON []byte
-// (which is valid YAML) suitable for the existing decode-and-apply path in
-// Migrate.
+// migrator-ready CRD set:
+//
+//   - Kinds in conversionCapableKinds (currently just hardware) are merged
+//     into one multi-version CRD. v1alpha1 is appended to v1alpha2's
+//     versions[]. v1alpha2 becomes storage:true; v1alpha1 stays
+//     served:true storage:false. Cross-version reads/writes go through
+//     the conversion webhook (when enabled), so field-level semantics
+//     round-trip correctly.
+//
+//   - Multi-version CRDs OUTSIDE conversionCapableKinds (workflows.tinkerbell.org,
+//     jobs.bmc.tinkerbell.org) would corrupt data with strategy:None
+//     conversion because v1alpha1 and v1alpha2 schemas differ
+//     materially. Until a data-migration controller or Workflow/Job
+//     conversion implementation is added, we install ONLY the v1alpha1
+//     version of these kinds — the runtime keeps working, v1alpha2
+//     readers/writers of those kinds are unavailable. Honest > silent
+//     data loss.
+//
+//   - CRDs in only one map (templates / workflowrulesets / machines.bmc /
+//     tasks.bmc on v1alpha1; bmcs / policies / tasks.tinkerbell.org on
+//     v1alpha2) pass through with their single served+storage version.
+//     The v1alpha2-only CRDs are new kinds that have no v1alpha1 analog;
+//     consumers using them write directly via v1alpha2.
+//
+// Output is JSON []byte (also valid YAML) suitable for the existing
+// decode-and-apply path in Migrate.
 func mergedCRDs() map[string][]byte {
 	out := make(map[string][]byte, len(TinkerbellV1Alpha1)+len(TinkerbellV1Alpha2))
 	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
@@ -118,21 +138,28 @@ func mergedCRDs() map[string][]byte {
 		}
 	}
 
-	// Start with v1alpha2 (its storage:true will remain).
-	for name, raw := range TinkerbellV1Alpha2 {
+	// Start with v1alpha1 as the base (canonical runtime version).
+	for name, raw := range TinkerbellV1Alpha1 {
 		out[name] = raw
 	}
-	for name, raw := range TinkerbellV1Alpha1 {
-		v2raw, hasV2 := out[name]
-		if !hasV2 {
-			// v1alpha1-only CRD; pass through.
+	for name, raw := range TinkerbellV1Alpha2 {
+		v1raw, hasV1 := out[name]
+		if !hasV1 {
+			// v1alpha2-only CRD (new kind, no v1alpha1 analog); pass through.
 			out[name] = raw
 			continue
 		}
-		// Multi-version merge: append v1alpha1 versions[] to v1alpha2's, flip
-		// storage flags.
-		v1u := parse(raw)
-		v2u := parse(v2raw)
+		// Both versions exist. Only merge into a multi-version CRD if we
+		// have a real conversion handler for this kind; otherwise drop
+		// the v1alpha2 file and keep the v1alpha1 single-version CRD.
+		if _, conversionReady := conversionCapableKinds[name]; !conversionReady {
+			// Keep v1alpha1 only. Logged at debug level by Migrate when
+			// the apply happens; we don't have a logger here.
+			continue
+		}
+		// Multi-version merge for kinds with conversion handlers.
+		v1u := parse(v1raw)
+		v2u := parse(raw)
 		v1Versions, _, _ := unstructured.NestedSlice(v1u.Object, "spec", "versions")
 		v2Versions, _, _ := unstructured.NestedSlice(v2u.Object, "spec", "versions")
 		setStorage(v1Versions, "v1alpha1", false)

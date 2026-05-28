@@ -83,6 +83,17 @@ func enabledIndexes(smeeEnabled, tootlesEnabled, tinkServerEnabled, secondStarEn
 		}
 	}
 
+	// Always register the v1alpha2 parallel indexers when ANY service is
+	// enabled. They're cheap (one watch per kind, shared with the
+	// v1alpha1 indexers since the apiserver serves both versions from
+	// the same storage), and they let downstream consumers opt into
+	// v1alpha2-typed List/Get queries without a separate cache.
+	if smeeEnabled || tootlesEnabled || tinkServerEnabled || secondStarEnabled {
+		for k, v := range kube.IndexesV1Alpha2 {
+			idxs[k] = v
+		}
+	}
+
 	return idxs
 }
 

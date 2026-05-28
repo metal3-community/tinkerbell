@@ -9,6 +9,16 @@ git:
     - api/v*
     - legacy-tink-v*
 
+# Apache 2.0 section 4(d) attribution: stage per-arch THIRD_PARTY_LICENSES
+# bundles before any binary is built so they can be shipped inside the
+# container images via the docker build context. The script is shellcheck-
+# able and runnable standalone (see script/third_party_licenses.sh).
+before:
+  hooks:
+    - bash -c 'mkdir -p bin && GOBIN=$PWD/bin go install github.com/google/go-licenses/v2@v2.0.1'
+    - bash script/third_party_licenses.sh amd64 out/THIRD_PARTY_LICENSES-linux-amd64 out/third_party/amd64 bin/go-licenses script/third_party_licenses_header.txt
+    - bash script/third_party_licenses.sh arm64 out/THIRD_PARTY_LICENSES-linux-arm64 out/third_party/arm64 bin/go-licenses script/third_party_licenses_header.txt
+
 builds:
   - id: tinkerbell
     env: ["CGO_ENABLED=0"]
@@ -82,6 +92,10 @@ changelog:
 dockers_v2:
   - id: tinkerbell
     dockerfile: Dockerfile.tinkerbell
+    extra_files:
+      - LICENSE
+      - out/THIRD_PARTY_LICENSES-linux-amd64
+      - out/THIRD_PARTY_LICENSES-linux-arm64
     images:
       - '{{ .Env.REGISTRY }}/{{ envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git") }}'
     tags:
@@ -100,6 +114,10 @@ dockers_v2:
     dockerfile: Dockerfile.tinkerbell
     build_args:
       BINARY: tinkerbell-embedded
+    extra_files:
+      - LICENSE
+      - out/THIRD_PARTY_LICENSES-linux-amd64
+      - out/THIRD_PARTY_LICENSES-linux-arm64
     images:
       - '{{ .Env.REGISTRY }}/{{ envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git") }}'
     tags:
@@ -115,6 +133,10 @@ dockers_v2:
 
   - id: tink-agent
     dockerfile: Dockerfile.agent
+    extra_files:
+      - LICENSE
+      - out/THIRD_PARTY_LICENSES-linux-amd64
+      - out/THIRD_PARTY_LICENSES-linux-arm64
     images:
       - '{{ .Env.REGISTRY }}/{{ trimsuffix (envOrDefault "IMAGE_NAME" (trimsuffix (trimprefix .GitURL "https://github.com/") ".git")) .ProjectName }}tink-agent'
     tags:

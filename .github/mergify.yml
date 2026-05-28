@@ -4,6 +4,7 @@ queue_rules:
   - name: default
     batch_size: 1
     queue_conditions:
+      - -draft
       - base=main
       - or:
           - "#approved-reviews-by>=1"
@@ -36,8 +37,6 @@ queue_rules:
 
       {{ body }}
 
-pull_request_rules:
-  - name: refactored queue action rule
-    conditions: []
-    actions:
-      queue:
+merge_protections_settings:
+  reporting_method: check-runs
+  auto_merge_conditions: true

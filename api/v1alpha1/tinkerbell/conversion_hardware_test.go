@@ -10,7 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 // roundTrip verifies that converting v1 → v2 → v1 yields the original.
 // This is the primary contract: lossless round-tripping via the annotation

@@ -76,17 +76,6 @@ deployment:
       upstreamUrl: {{ .Values.deployment.envs.iso.upstreamUrl }}
     https:
       bindPort: {{ .Values.deployment.envs.https.bindPort }}
-    dhcpInterface:
-      enabled: {{ .Values.deployment.envs.dhcpInterface.enabled }}
-      leaderElectionEnabled: {{ .Values.deployment.envs.dhcpInterface.leaderElectionEnabled }}
-      leaderElectionIdentity: {{ .Values.deployment.envs.dhcpInterface.leaderElectionIdentity }}
-      leaderElectionLeaseDuration: {{ .Values.deployment.envs.dhcpInterface.leaderElectionLeaseDuration }}
-      leaderElectionLockName: {{ .Values.deployment.envs.dhcpInterface.leaderElectionLockName }}
-      leaderElectionNamespace: {{ .Values.deployment.envs.dhcpInterface.leaderElectionNamespace }}
-      leaderElectionRenewDeadline: {{ .Values.deployment.envs.dhcpInterface.leaderElectionRenewDeadline }}
-      leaderElectionRetryPeriod: {{ .Values.deployment.envs.dhcpInterface.leaderElectionRetryPeriod }}
-      srcInterface: {{ .Values.deployment.envs.dhcpInterface.srcInterface }}
-      type: {{ .Values.deployment.envs.dhcpInterface.type }}
     tinkController:
       enableLeaderElection: {{ .Values.deployment.envs.tinkController.enableLeaderElection }}
       leaderElectionNamespace: {{ .Values.deployment.envs.tinkController.leaderElectionNamespace }}

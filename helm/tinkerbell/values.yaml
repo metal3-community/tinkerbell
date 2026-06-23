@@ -86,6 +86,15 @@ deployment:
       syslogIP: ""
       tftpIP: ""
       tftpPort: 69
+      # Leader election ensures only a single Smee instance serves DHCP at a time.
+      # This replaces host network interface (macvlan) management and is compatible
+      # with per-pod IPs assigned by CNIs such as Multus macvlan. Requires the kube
+      # backend; ignored for file/none backends.
+      leaderElectionEnabled: true
+      # leaderElectionNamespace defaults to the backend kube namespace when empty.
+      leaderElectionNamespace: ""
+      # leaderElectionLeaseName is the coordination.k8s.io Lease used as the lock.
+      leaderElectionLeaseName: "smee-dhcp"
     smee:
       logLevel: 0
     ipxe:
@@ -123,8 +132,6 @@ deployment:
       upstreamUrl: ""
     https:
       bindPort: 7272
-    dhcpInterface:
-      enabled: false
     tinkController:
       enableLeaderElection: true
       leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'

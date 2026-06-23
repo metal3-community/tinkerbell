@@ -153,19 +153,15 @@ spec:
             successThreshold: {{ .Values.deployment.probes.startup.successThreshold }}
           {{- end }}
           securityContext:
-            {{- if or .Values.deployment.envs.dhcpInterface.enabled .Values.deployment.init.enabled }}
+            {{- if .Values.deployment.init.enabled }}
             privileged: true
             {{- end }}
             capabilities:
               add:
+                # NET_RAW is required for the DHCP server to send broadcast replies.
+                # DHCP serving is gated by leader election (see dhcp.leaderElectionEnabled),
+                # so no host network interface management privileges are needed.
                 - NET_RAW
-                {{- if or .Values.deployment.envs.dhcpInterface.enabled (eq .Values.deployment.envs.dhcpInterface.type "ebpf") }}
-                - NET_ADMIN
-                {{- end }}
-                {{- if eq .Values.deployment.envs.dhcpInterface.type "ebpf" }}
-                - SYS_ADMIN
-                - BPF
-                {{- end }}
           {{- with .Values.deployment.volumeMounts }}
           volumeMounts:
           {{- toYaml . | nindent 10 }}
@@ -198,7 +194,7 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if or .Values.deployment.init.enabled .Values.deployment.envs.dhcpInterface.enabled (eq .Values.deployment.envs.dhcpInterface.type "ebpf") }}
+      {{- if .Values.deployment.init.enabled }}
       hostPID: true
       {{- end }}
       {{- if .Values.deployment.init.enabled }}

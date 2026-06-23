@@ -151,8 +151,13 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(TFTPBlockSize, ffval.NewValueDefault(&sc.Config.TFTP.BlockSize, sc.Config.TFTP.BlockSize))
 	fs.Register(TFTPSinglePort, ffval.NewValueDefault(&sc.Config.TFTP.SinglePort, sc.Config.TFTP.SinglePort))
 
-	// DHCP Interface Management Flags
-	fs.Register(DHCPInterfaceEnabled, ffval.NewValueDefault(&sc.Config.DHCPInterface.Enabled, sc.Config.DHCPInterface.Enabled))
+	// DHCP Leader Election Flags
+	fs.Register(DHCPLeaderElectionEnabled, ffval.NewValueDefault(&sc.Config.LeaderElection.Enabled, sc.Config.LeaderElection.Enabled))
+	fs.Register(DHCPLeaderElectionNamespace, ffval.NewValueDefault(&sc.Config.LeaderElection.Namespace, sc.Config.LeaderElection.Namespace))
+	fs.Register(DHCPLeaderElectionLeaseName, ffval.NewValueDefault(&sc.Config.LeaderElection.LeaseName, sc.Config.LeaderElection.LeaseName))
+	fs.Register(DHCPLeaderElectionLeaseDuration, ffval.NewValueDefault(&sc.Config.LeaderElection.LeaseDuration, sc.Config.LeaderElection.LeaseDuration))
+	fs.Register(DHCPLeaderElectionRenewDeadline, ffval.NewValueDefault(&sc.Config.LeaderElection.RenewDeadline, sc.Config.LeaderElection.RenewDeadline))
+	fs.Register(DHCPLeaderElectionRetryPeriod, ffval.NewValueDefault(&sc.Config.LeaderElection.RetryPeriod, sc.Config.LeaderElection.RetryPeriod))
 }
 
 // Convert CLI specific fields to smee.Config fields.
@@ -536,7 +541,32 @@ var DHCPEnableNetbootOptions = Config{
 	Usage: "[dhcp] enable sending netboot DHCP options",
 }
 
-var DHCPInterfaceEnabled = Config{
-	Name:  "dhcp-interface-enabled",
-	Usage: "[dhcp-interface] enable automatic DHCP proxy interface (macvlan) management",
+var DHCPLeaderElectionEnabled = Config{
+	Name:  "dhcp-leader-election-enabled",
+	Usage: "[dhcp] gate DHCP serving behind Kubernetes leader election so only a single instance serves DHCP (requires the kube backend; ignored otherwise)",
+}
+
+var DHCPLeaderElectionNamespace = Config{
+	Name:  "dhcp-leader-election-namespace",
+	Usage: "[dhcp] namespace for the DHCP leader election Lease (defaults to the backend kube namespace)",
+}
+
+var DHCPLeaderElectionLeaseName = Config{
+	Name:  "dhcp-leader-election-lease-name",
+	Usage: "[dhcp] name of the coordination.k8s.io Lease used for DHCP leader election",
+}
+
+var DHCPLeaderElectionLeaseDuration = Config{
+	Name:  "dhcp-leader-election-lease-duration",
+	Usage: "[dhcp] duration non-leaders wait before force-acquiring DHCP leadership",
+}
+
+var DHCPLeaderElectionRenewDeadline = Config{
+	Name:  "dhcp-leader-election-renew-deadline",
+	Usage: "[dhcp] duration the DHCP leader retries refreshing leadership before giving up",
+}
+
+var DHCPLeaderElectionRetryPeriod = Config{
+	Name:  "dhcp-leader-election-retry-period",
+	Usage: "[dhcp] interval between attempts to acquire or renew DHCP leadership",
 }

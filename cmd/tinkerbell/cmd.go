@@ -332,6 +332,16 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 			return fmt.Errorf("failed to create kube backend: %w", err)
 		}
 		s.Config.Backend = b
+		// Wire DHCP leader election to the kube backend so only a single Smee
+		// instance serves DHCP. Compatible with per-pod IPs from CNIs such as
+		// Multus macvlan (no host interface manipulation needed).
+		s.Config.LeaderElection.RESTConfig = b.ClientConfig
+		if s.Config.LeaderElection.Namespace == "" {
+			s.Config.LeaderElection.Namespace = globals.BackendKubeNamespace
+		}
+		if s.Config.LeaderElection.Namespace == "" {
+			s.Config.LeaderElection.Namespace = currentNamespace()
+		}
 		h.Config.SetBackendFromFilterer(b)
 		ts.Config.SetBackends(b)
 		tc.Config.Client = b.ClientConfig

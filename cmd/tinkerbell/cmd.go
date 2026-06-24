@@ -231,6 +231,9 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		s.Config.TinkServer.UseTLS = true
 	}
 
+	// Smee DHCP leader election
+	s.Config.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), s.Config.EnableLeaderElection, s.Config.LeaderElectionNamespace)
+
 	// Tink Controller
 	tc.Config.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), tc.Config.EnableLeaderElection, tc.Config.LeaderElectionNamespace)
 
@@ -335,13 +338,7 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		// Wire DHCP leader election to the kube backend so only a single Smee
 		// instance serves DHCP. Compatible with per-pod IPs from CNIs such as
 		// Multus macvlan (no host interface manipulation needed).
-		s.Config.LeaderElection.RESTConfig = b.ClientConfig
-		if s.Config.LeaderElection.Namespace == "" {
-			s.Config.LeaderElection.Namespace = globals.BackendKubeNamespace
-		}
-		if s.Config.LeaderElection.Namespace == "" {
-			s.Config.LeaderElection.Namespace = currentNamespace()
-		}
+		s.Config.Client = b.ClientConfig
 		h.Config.SetBackendFromFilterer(b)
 		ts.Config.SetBackends(b)
 		tc.Config.Client = b.ClientConfig

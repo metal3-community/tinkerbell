@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path"
 	"strings"
 
@@ -9,19 +8,6 @@ import (
 	"github.com/tinkerbell/tinkerbell/pkg/backend/kube"
 	"k8s.io/client-go/rest"
 )
-
-// currentNamespace returns the namespace Tinkerbell is running in. It prefers
-// the in-cluster ServiceAccount namespace and falls back to "default". Used to
-// derive a sane leader election Lease namespace when none is configured.
-func currentNamespace() string {
-	const saNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-	if data, err := os.ReadFile(saNamespaceFile); err == nil {
-		if ns := strings.TrimSpace(string(data)); ns != "" {
-			return ns
-		}
-	}
-	return defaultLeaderElectionNamespace
-}
 
 func ternary[T any](condition bool, valueIfTrue, valueIfFalse T) T {
 	if condition {

@@ -159,7 +159,7 @@ spec:
             capabilities:
               add:
                 # NET_RAW is required for the DHCP server to send broadcast replies.
-                # DHCP serving is gated by leader election (see dhcp.leaderElectionEnabled),
+                # DHCP serving is gated by leader election (see dhcp.enableLeaderElection),
                 # so no host network interface management privileges are needed.
                 - NET_RAW
           {{- with .Values.deployment.volumeMounts }}

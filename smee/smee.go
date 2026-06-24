@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
 	"path"
 	"reflect"
 	"strings"
@@ -35,11 +34,10 @@ import (
 	"github.com/tinkerbell/tinkerbell/smee/internal/osie"
 	"github.com/tinkerbell/tinkerbell/smee/internal/syslog"
 	"golang.org/x/sync/errgroup"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	controllerruntime "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 // MetricsRegistry returns the Prometheus registry that contains all Smee metrics.
@@ -122,8 +120,16 @@ type Config struct {
 	TinkServer TinkServer
 	// TLS is the configuration for TLS.
 	TLS TLS
-	// LeaderElection gates DHCP serving so only a single instance serves DHCP.
-	LeaderElection LeaderElection
+	// EnableLeaderElection gates DHCP serving behind Kubernetes leader election
+	// so only a single Smee instance serves DHCP at a time. When false (or when
+	// Client is nil, e.g. file/none backends) DHCP is served unconditionally.
+	EnableLeaderElection bool
+	// LeaderElectionNamespace is the namespace in which the leader election Lease
+	// is created. When empty, the namespace is auto-detected (in-cluster).
+	LeaderElectionNamespace string
+	// Client is the Kubernetes client config used for leader election. When nil,
+	// leader election is skipped regardless of EnableLeaderElection.
+	Client *rest.Config
 }
 
 type Syslog struct {
@@ -255,37 +261,6 @@ type TLS struct {
 	Certs []tls.Certificate
 }
 
-// LeaderElection holds configuration for Kubernetes lease-based leader
-// election that ensures only a single Smee instance serves DHCP at a time.
-//
-// This replaces host network interface management (macvlan/ipvlan) and is
-// compatible with per-pod IP addresses assigned by CNIs such as Multus
-// macvlan: each replica keeps the IP given to its pod and only the elected
-// leader binds and serves the DHCP server. Standby replicas take over
-// automatically if the leader goes away.
-type LeaderElection struct {
-	// Enabled controls whether DHCP serving is gated by leader election.
-	// When true (and RESTConfig is set) only the elected leader serves DHCP.
-	// When RESTConfig is nil (e.g. file/none backends) leader election is
-	// skipped and DHCP is served unconditionally.
-	Enabled bool
-	// Namespace is the namespace of the coordination.k8s.io Lease used as the lock.
-	Namespace string
-	// LeaseName is the name of the Lease used as the lock.
-	LeaseName string
-	// Identity uniquely identifies this candidate. Defaults to the hostname.
-	Identity string
-	// LeaseDuration is the duration non-leaders wait before force-acquiring leadership.
-	LeaseDuration time.Duration
-	// RenewDeadline is the duration the leader retries refreshing leadership before giving up.
-	RenewDeadline time.Duration
-	// RetryPeriod is the interval between attempts to acquire or renew leadership.
-	RetryPeriod time.Duration
-	// RESTConfig is the Kubernetes client config used to create and renew the Lease.
-	// When nil, leader election is disabled regardless of Enabled.
-	RESTConfig *rest.Config
-}
-
 // NewConfig is a constructor for the Config struct. It will set default values for the Config struct.
 // Boolean fields are not set-able via c. To set boolean, modify the returned Config struct.
 func NewConfig(c Config, publicIP netip.Addr) *Config {
@@ -361,14 +336,8 @@ func NewConfig(c Config, publicIP netip.Addr) *Config {
 			Anticipate: DefaultTFFTPAnticipate,
 			Enabled:    true,
 		},
-		TinkServer: TinkServer{},
-		LeaderElection: LeaderElection{
-			Enabled:       true,
-			LeaseName:     "smee-dhcp",
-			LeaseDuration: 15 * time.Second,
-			RenewDeadline: 10 * time.Second,
-			RetryPeriod:   2 * time.Second,
-		},
+		TinkServer:           TinkServer{},
+		EnableLeaderElection: true,
 	}
 
 	if err := mergo.Merge(defaults, &c, mergo.WithTransformers(&c)); err != nil {
@@ -591,7 +560,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 			// Leader election ensures only a single Smee instance serves DHCP at a
 			// time. This is compatible with per-pod IPs assigned by CNIs such as
 			// Multus macvlan, requiring no host network interface manipulation.
-			if c.LeaderElection.Enabled && c.LeaderElection.RESTConfig != nil {
+			if c.EnableLeaderElection && c.Client != nil {
 				return c.serveDHCPWithLeaderElection(ctx, log.WithName("leaderelection"), dh, dhcpAddrPort)
 			}
 			log.Info("starting dhcp server", "bindAddr", dhcpAddrPort)
@@ -619,93 +588,41 @@ func (c *Config) serveDHCP(ctx context.Context, log logr.Logger, dh server.Handl
 	return ds.Serve(ctx)
 }
 
-// serveDHCPWithLeaderElection runs Kubernetes lease-based leader election and
-// serves DHCP only while this instance holds leadership. Losing leadership
-// shuts down the DHCP listener; the instance keeps contending so a standby
-// instance can take over and a former leader can reacquire. It returns when
-// the parent ctx is cancelled or the DHCP listener fails to bind/serve.
+// serveDHCPWithLeaderElection serves DHCP only while this instance holds
+// Kubernetes lease-based leadership. It mirrors the controller-runtime manager
+// based leader election used by the Rufio and Tink controllers: the DHCP server
+// is registered as a leader-election runnable that starts when leadership is
+// acquired and stops when it is lost. Losing leadership returns from Start,
+// allowing a standby instance to take over. This is compatible with per-pod IPs
+// assigned by CNIs such as Multus macvlan, requiring no host network interface
+// manipulation.
 func (c *Config) serveDHCPWithLeaderElection(ctx context.Context, log logr.Logger, dh server.Handler, addrPort netip.AddrPort) error {
-	client, err := kubernetes.NewForConfig(c.LeaderElection.RESTConfig)
+	mgr, err := controllerruntime.NewManager(c.Client, controllerruntime.Options{
+		Logger:                        log,
+		LeaderElection:                true,
+		LeaderElectionID:              "smee-dhcp.tinkerbell.org",
+		LeaderElectionNamespace:       c.LeaderElectionNamespace,
+		LeaderElectionReleaseOnCancel: true,
+		Metrics:                       metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress:        "0",
+	})
 	if err != nil {
-		return fmt.Errorf("creating kubernetes client for leader election: %w", err)
+		return fmt.Errorf("creating manager for DHCP leader election: %w", err)
 	}
 
-	identity := c.LeaderElection.Identity
-	if identity == "" {
-		host, herr := os.Hostname()
-		if herr != nil || host == "" {
-			return fmt.Errorf("leader election identity is empty and hostname could not be determined: %w", herr)
-		}
-		identity = host
-	}
-
-	lock := &resourcelock.LeaseLock{
-		LeaseMeta: metav1.ObjectMeta{
-			Name:      c.LeaderElection.LeaseName,
-			Namespace: c.LeaderElection.Namespace,
-		},
-		Client:     client.CoordinationV1(),
-		LockConfig: resourcelock.ResourceLockConfig{Identity: identity},
-	}
-
-	// leCtx lets us stop the election loop (and release the lease) if the DHCP
-	// listener fails while we are the leader. Cancelling it is independent of a
-	// transient leadership loss, after which we keep contending.
-	leCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// serveErr surfaces a DHCP bind/serve failure (other than a clean shutdown
-	// triggered by leadership loss) out of the OnStartedLeading callback.
-	serveErr := make(chan error, 1)
-	cfg := leaderelection.LeaderElectionConfig{
-		Lock:            lock,
-		ReleaseOnCancel: true,
-		LeaseDuration:   c.LeaderElection.LeaseDuration,
-		RenewDeadline:   c.LeaderElection.RenewDeadline,
-		RetryPeriod:     c.LeaderElection.RetryPeriod,
-		Name:            c.LeaderElection.LeaseName,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(leaderCtx context.Context) {
-				log.Info("acquired DHCP leadership, starting dhcp server", "identity", identity, "bindAddr", addrPort)
-				if err := c.serveDHCP(leaderCtx, log, dh, addrPort); err != nil && !errors.Is(err, context.Canceled) {
-					// A bind/serve failure is not recoverable by re-electing, so
-					// record it and stop the election loop to release the lease and
-					// let another instance try.
-					select {
-					case serveErr <- err:
-					default:
-					}
-					cancel()
-				}
-			},
-			OnStoppedLeading: func() {
-				log.Info("lost DHCP leadership, dhcp server stopped", "identity", identity)
-			},
-			OnNewLeader: func(leader string) {
-				if leader != identity {
-					log.Info("standing by, another instance is the DHCP leader", "leader", leader, "identity", identity)
-				}
-			},
-		},
-	}
-
-	// elector.Run returns when leadership is lost or leCtx is cancelled. Loop so a
-	// former leader keeps contending instead of permanently giving up DHCP.
-	for leCtx.Err() == nil {
-		elector, err := leaderelection.NewLeaderElector(cfg)
-		if err != nil {
-			return fmt.Errorf("creating leader elector: %w", err)
-		}
-		elector.Run(leCtx)
-
-		select {
-		case err := <-serveErr:
+	// A plain RunnableFunc is leader-election gated by controller-runtime, so the
+	// DHCP server only runs on the elected leader.
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		log.Info("acquired DHCP leadership, starting dhcp server", "bindAddr", addrPort)
+		if err := c.serveDHCP(ctx, log, dh, addrPort); err != nil && !errors.Is(err, context.Canceled) {
 			return fmt.Errorf("dhcp server failed: %w", err)
-		default:
 		}
+		return nil
+	})); err != nil {
+		return fmt.Errorf("adding dhcp server to manager: %w", err)
 	}
 
-	return nil
+	return mgr.Start(ctx)
 }
 
 func (c *Config) dhcpHandler(log logr.Logger) (server.Handler, error) {

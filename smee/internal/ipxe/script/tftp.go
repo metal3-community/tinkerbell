@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp"
+	"github.com/tinkerbell/tinkerbell/smee/internal/hardware"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -130,7 +131,7 @@ func (h Handler) HandleTFTP(filename string, rf io.ReaderFrom) error {
 	defer span.End()
 
 	// Get machine data from backend
-	hw, err := getByMac(ctx, mac, h.Backend)
+	hw, err := hardware.GetByMac(ctx, mac, h.Backend)
 	if err != nil && !h.StaticIPXEEnabled {
 		log.Error(err, "backend lookup failed, using MAC address defaults", "mac", mac.String())
 		return fmt.Errorf("failed to get machine info for MAC %s: %w", mac.String(), err)
@@ -141,7 +142,7 @@ func (h Handler) HandleTFTP(filename string, rf io.ReaderFrom) error {
 		if dhcp.IsRaspberryPI(mac) {
 			arch = "aarch64"
 		}
-		hw = info{
+		hw = hardware.Info{
 			Arch:         arch,
 			MACAddress:   mac,
 			AllowNetboot: true,

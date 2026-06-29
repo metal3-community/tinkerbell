@@ -20,6 +20,8 @@ deployment:
   # It is not set because in the deployment.yaml a coalesce is used with this value
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
   agentImageTag:
+  captainImage: ghcr.io/rpardini/captain/artifacts
+  captainImageTag: v0.0.0-0ab6603-trixie-full
   annotations: {}
   daemonSet:
     enabled: false
@@ -66,6 +68,7 @@ deployment:
       logLevel: 0
     osie:
       debugMode: false
+      imagePath: "/var/lib/images"
       logLevel: 0
     dhcp:
       bindAddr: ""
@@ -225,21 +228,14 @@ deployment:
   tolerations: []
   topologySpreadConstraints: []
   # Additional volumes on the output Deployment definition.
-  volumes:
-    - name: captain-artifacts
-      image:
-        reference: ghcr.io/rpardini/captain/artifacts:v0.0.0-0ab6603-trixie-full
-        pullPolicy: PullIfNotPresent
-
+  volumes: []
   # - name: foo
   #   secret:
   #     secretName: mysecret
   #     optional: false
 
   # Additional volumeMounts on the output Deployment definition.
-  volumeMounts:
-    - name: captain-artifacts
-      mountPath: /var/lib/images
+  volumeMounts: []
   # - name: foo
   #   mountPath: "/etc/foo"
   #   subPath: "foo"

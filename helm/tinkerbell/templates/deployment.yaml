@@ -174,14 +174,20 @@ spec:
                 - NET_ADMIN
                 - SYS_ADMIN
                 {{- end }}
-          {{- with .Values.deployment.volumeMounts }}
           volumeMounts:
+          - name: captain-artifacts
+            mountPath: {{ .Values.deployment.envs.osie.imagePath }}
+          {{- with .Values.deployment.volumeMounts }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
       hostNetwork: {{ .Values.deployment.hostNetwork }}
       serviceAccountName: {{ include "tinkerbell.serviceAccountName" . }}
       volumes:
-      {{- with  .Values.deployment.volumes }}
+      - name: captain-artifacts
+        image:
+          reference: {{ .Values.deployment.captainImage }}:{{ .Values.deployment.captainImageTag }}
+          pullPolicy: IfNotPresent
+      {{- with .Values.deployment.volumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
       {{- with .Values.deployment.nodeSelector }}

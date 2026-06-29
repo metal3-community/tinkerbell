@@ -98,11 +98,6 @@ deployment:
   image: {{ .Values.deployment.image }}
   imagePullPolicy: {{ .Values.deployment.imagePullPolicy }}
   imageTag: {{ .Values.deployment.imageTag }}
-  init:
-    enabled: {{ .Values.deployment.init.enabled }}
-    image: {{ .Values.deployment.init.image }}
-    interfaceMode: {{ .Values.deployment.init.interfaceMode }}
-    sourceInterface: {{ .Values.deployment.init.sourceInterface }}
   nodeSelector: {{ .Values.deployment.nodeSelector | toYaml | nindent 4 }}
   replicas: {{ .Values.deployment.replicas }}
   resources:

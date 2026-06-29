@@ -25,6 +25,14 @@ type SmeeConfig struct {
 	// The cmd package is responsible for putting the fields back together into a url.URL for use in service package configs.
 	DHCPIPXEScript URLBuilder
 	LogLevel       int
+	// MacvlanEnabled enables native macvlan interface setup at startup.
+	// When true the binary creates a macvlan interface in the host netns and
+	// moves it into the pod netns before starting the DHCP server.
+	// Requires CAP_NET_ADMIN + CAP_SYS_ADMIN and hostPID=true.
+	MacvlanEnabled bool
+	// MacvlanSourceInterface is the host parent interface for the macvlan.
+	// When empty the host's default-route interface is used.
+	MacvlanSourceInterface string
 }
 
 var KubeIndexesSmee = map[kube.IndexType]kube.Index{
@@ -48,6 +56,8 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(DHCPModeFlag, &sc.Config.DHCP.Mode)
 	fs.Register(DHCPBindAddr, &ntip.Addr{Addr: &sc.Config.DHCP.BindAddr})
 	fs.Register(DHCPBindInterface, ffval.NewValueDefault(&sc.Config.DHCP.BindInterface, sc.Config.DHCP.BindInterface))
+	fs.Register(DHCPMacvlanEnabled, ffval.NewValueDefault(&sc.MacvlanEnabled, sc.MacvlanEnabled))
+	fs.Register(DHCPMacvlanSourceInterface, ffval.NewValueDefault(&sc.MacvlanSourceInterface, sc.MacvlanSourceInterface))
 	fs.Register(DHCPIPForPacket, &ntip.Addr{Addr: &sc.Config.DHCP.IPForPacket})
 	fs.Register(DHCPSyslogIP, &ntip.Addr{Addr: &sc.Config.DHCP.SyslogIP})
 	fs.Register(DHCPTftpIP, &ntip.Addr{Addr: &sc.Config.DHCP.TFTPIP})
@@ -261,6 +271,16 @@ var DHCPBindAddr = Config{
 var DHCPBindInterface = Config{
 	Name:  "dhcp-bind-interface",
 	Usage: "[dhcp] DHCP server bind interface",
+}
+
+var DHCPMacvlanEnabled = Config{
+	Name:  "dhcp-macvlan-enabled",
+	Usage: "[dhcp] create a per-pod macvlan interface at startup and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN, and hostPID=true",
+}
+
+var DHCPMacvlanSourceInterface = Config{
+	Name:  "dhcp-macvlan-source-interface",
+	Usage: "[dhcp] host parent interface for the macvlan (empty = auto-detect from host default route)",
 }
 
 var DHCPIPForPacket = Config{

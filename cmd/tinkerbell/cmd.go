@@ -392,6 +392,19 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		ll := ternary((s.LogLevel != 0), s.LogLevel, globals.LogLevel)
 		smeeLog := getLogger(ll).WithName("smee")
 
+		if s.MacvlanEnabled {
+			ifaceName, err := macvlanIfaceName()
+			if err != nil {
+				return fmt.Errorf("macvlan interface name: %w", err)
+			}
+			cleanup, err := setupMacvlan(smeeLog, s.MacvlanSourceInterface, ifaceName)
+			if err != nil {
+				return fmt.Errorf("setup macvlan: %w", err)
+			}
+			defer cleanup()
+			s.Config.DHCP.BindInterface = ifaceName
+		}
+
 		if err := s.Config.Start(ctx, smeeLog); err != nil {
 			return fmt.Errorf("failed to start smee service: %w", err)
 		}

@@ -92,6 +92,16 @@ deployment:
       # backend; ignored for file/none backends.
       enableLeaderElection: true
       leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
+      # macvlanEnabled enables native macvlan interface setup inside the tinkerbell
+      # binary (no init container required). The binary creates a per-pod macvlan
+      # interface (mv<13-hex-chars-of-pod-UID>) in the host netns and moves it into
+      # the pod netns before starting the DHCP server.
+      # Requires hostPID=true and CAP_NET_ADMIN + CAP_SYS_ADMIN (added automatically
+      # when this is true).
+      macvlanEnabled: false
+      # macvlanSourceInterface is the host parent interface for the macvlan.
+      # Leave empty to auto-detect from the host's default route.
+      macvlanSourceInterface: ""
     smee:
       logLevel: 0
     ipxe:
@@ -161,16 +171,6 @@ deployment:
   # It is not set because in the deployment.yaml a coalesce is used with this value
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
   imageTag:
-  init:
-    enabled: false
-    # if `interfaceMode: ipvlan`, then ghcr.io/jacobweinstock/relay-init:v0.1.0 (has nmap and nmap-scripts) is required. Otherwise, alpine can be used.
-    image: ghcr.io/jacobweinstock/relay-init:v0.1.0
-    # interfaceMode determines how we create the interface needed to listen for DHCP broadcast traffic.
-    # by default macvlan is used. ipvlan is the only other option.
-    interfaceMode: macvlan
-    # sourceInterface is the Host/Node interface to use for listening for DHCP broadcast packets.
-    # When unset, the interface from the default route will be used.
-    # sourceInterface: eno1
   nodeSelector: {}
   replicas: 1
   resources:

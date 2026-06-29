@@ -59,20 +59,26 @@ spec:
           env:
             {{- include "tinkerbell.generateEnvVars" .Values.deployment.envs | nindent 12 }}
           {{- end }}
-          {{- /* FOR USE WITH hostNetwork: true (AUTO-CONFIGURATION) */ -}}
-          {{- if .Values.deployment.hostNetwork -}}
-          {{- if .Values.createConfigmap }}
+          {{- /* Open env: when using configmap but extra downward-API vars are needed */}}
+          {{- $needsExtraEnv := or .Values.deployment.hostNetwork .Values.deployment.envs.dhcp.macvlanEnabled .Values.deployment.additionalEnvs }}
+          {{- if and .Values.createConfigmap $needsExtraEnv }}
           env:
           {{- end }}
+          {{- if .Values.deployment.hostNetwork }}
             - name: HOST_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.hostIP
           {{- end }}
-            {{- /* Additional environment variables */}}
-            {{- with .Values.deployment.additionalEnvs }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
+          {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
+            - name: MY_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+          {{- end }}
+          {{- with .Values.deployment.additionalEnvs }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             {{- /* This is always enabled because /metrics and /healthcheck are always enabled */}}
             - containerPort: {{ .Values.deployment.envs.globals.httpPort }}
@@ -156,15 +162,18 @@ spec:
             successThreshold: {{ .Values.deployment.probes.startup.successThreshold }}
           {{- end }}
           securityContext:
-            {{- if .Values.deployment.init.enabled }}
-            privileged: true
-            {{- end }}
             capabilities:
               add:
                 # NET_RAW is required for the DHCP server to send broadcast replies.
                 # DHCP serving is gated by leader election (see dhcp.enableLeaderElection),
                 # so no host network interface management privileges are needed.
                 - NET_RAW
+                {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
+                # NET_ADMIN + SYS_ADMIN are required for native macvlan setup:
+                # netlink link/addr operations and setns to enter the host netns.
+                - NET_ADMIN
+                - SYS_ADMIN
+                {{- end }}
           {{- with .Values.deployment.volumeMounts }}
           volumeMounts:
           {{- toYaml . | nindent 10 }}
@@ -172,12 +181,6 @@ spec:
       hostNetwork: {{ .Values.deployment.hostNetwork }}
       serviceAccountName: {{ include "tinkerbell.serviceAccountName" . }}
       volumes:
-      {{- if .Values.deployment.init.enabled }}
-      - name: script
-        configMap:
-          name: host-interface-script
-          defaultMode: 0500
-      {{- end }}
       {{- with  .Values.deployment.volumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
@@ -197,14 +200,10 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.deployment.init.enabled }}
+      {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
       hostPID: true
       {{- end }}
-      {{- if .Values.deployment.init.enabled }}
-      {{- range .Values.deployment.initContainers }}
+      {{- with .Values.deployment.initContainers }}
       initContainers:
-        - {{ . | toYaml | nindent 10 }}
-      {{- end }}
-        securityContext:
-          privileged: true
+        {{- toYaml . | nindent 8 }}
       {{- end }}

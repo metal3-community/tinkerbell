@@ -9,11 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/tinkerbell/tinkerbell/pkg/tftp/handler"
-	"github.com/tinkerbell/tinkerbell/smee/internal/osie/images"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -21,10 +19,8 @@ import (
 
 const (
 	// DefaultURLPrefix is the default URI path prefix for all OSIE file requests.
-	DefaultURLPrefix     = "/images/"
-	defaultOCIReference  = "v0.0.0-9ea7a56"
-	defaultOCIRepository = "tinkerbell/captain/artifacts"
-	defaultImagePath     = "/var/lib/images"
+	DefaultURLPrefix = "/images/"
+	defaultImagePath = "/var/lib/images"
 )
 
 // serialOrMacPattern matches path prefixes with a serial number or MAC address: <serial-or-mac>/
@@ -40,18 +36,6 @@ type Handler struct {
 	URLPrefix string
 	// ImagePath is the directory where OSIE images are stored.
 	ImagePath string
-	// OCIRegistry is the OCI registry URL (e.g., "ghcr.io").
-	OCIRegistry string
-	// OCIRepository is the repository path (e.g., "tinkerbell/captain/artifacts").
-	OCIRepository string
-	// OCIReference is the image tag or digest (e.g., "latest", "v1.2.3", "sha256:...").
-	OCIReference string
-	// OCIUsername is the optional username for OCI registry authentication.
-	OCIUsername string
-	// OCIPassword is the optional password for OCI registry authentication.
-	OCIPassword string
-	// PullTimeout for pulling OCI images.
-	PullTimeout time.Duration
 }
 
 // Option functions for configuring the OSIE service.
@@ -69,80 +53,17 @@ func WithImagePath(path string) Option {
 	}
 }
 
-func WithOCIRegistry(registry string) Option {
-	return func(c *Handler) {
-		c.OCIRegistry = registry
-	}
-}
-
-func WithOCIRepository(repository string) Option {
-	return func(c *Handler) {
-		c.OCIRepository = repository
-	}
-}
-
-func WithOCIReference(reference string) Option {
-	return func(c *Handler) {
-		c.OCIReference = reference
-	}
-}
-
-func WithPullTimeout(timeout time.Duration) Option {
-	return func(c *Handler) {
-		c.PullTimeout = timeout
-	}
-}
-
-func WithOCIUsername(username string) Option {
-	return func(c *Handler) {
-		c.OCIUsername = username
-	}
-}
-
-func WithOCIPassword(password string) Option {
-	return func(c *Handler) {
-		c.OCIPassword = password
-	}
-}
-
 // NewConfig creates a new OSIE service configuration with defaults.
 func NewConfig(opts ...Option) *Handler {
 	defaults := &Handler{
-		DebugMode:     false,
-		URLPrefix:     DefaultURLPrefix,
-		ImagePath:     defaultImagePath,
-		OCIRegistry:   "ghcr.io",
-		OCIRepository: defaultOCIRepository,
-		OCIReference:  defaultOCIReference,
-		PullTimeout:   10 * time.Minute,
+		DebugMode: false,
+		URLPrefix: DefaultURLPrefix,
+		ImagePath: defaultImagePath,
 	}
 	for _, opt := range opts {
 		opt(defaults)
 	}
 	return defaults
-}
-
-// Start initializes and starts the OSIE image puller service.
-// It creates an images.Puller that periodically checks whether the image directory
-// has files and, if not, pulls the configured OCI image in the background.
-func (c *Handler) Start(ctx context.Context, log logr.Logger) error {
-	log.Info("starting OSIE service")
-
-	_, err := images.NewPuller(ctx, log,
-		images.WithRegistry(c.OCIRegistry),
-		images.WithRepository(c.OCIRepository),
-		images.WithReference(c.OCIReference),
-		images.WithUsername(c.OCIUsername),
-		images.WithPassword(c.OCIPassword),
-		images.WithDestDir(c.ImagePath),
-		images.WithPullTimeout(c.PullTimeout),
-	)
-	if err != nil {
-		return fmt.Errorf("creating image puller: %w", err)
-	}
-
-	<-ctx.Done()
-	return nil
 }
 
 // Handle returns an http.Handle that serves OSIE files from the filesystem.

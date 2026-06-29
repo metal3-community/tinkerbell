@@ -240,15 +240,9 @@ type ISO struct {
 
 // OSIE holds configuration for the OSIE image service.
 type OSIE struct {
-	Enabled       bool
-	URLPrefix     string
-	ImagePath     string
-	OCIRegistry   string
-	OCIRepository string
-	OCIReference  string
-	OCIUsername   string
-	OCIPassword   string
-	PullTimeout   time.Duration
+	Enabled   bool
+	URLPrefix string
+	ImagePath string
 }
 
 type TinkServer struct {
@@ -310,13 +304,9 @@ func NewConfig(c Config, publicIP netip.Addr) *Config {
 			StaticIPAMEnabled: false,
 		},
 		OSIE: OSIE{
-			Enabled:       false,
-			URLPrefix:     OSIEURI,
-			ImagePath:     "/var/lib/images",
-			OCIRegistry:   "ghcr.io",
-			OCIRepository: "tinkerbell/captain/artifacts",
-			OCIReference:  "v0.0.0-9ea7a56",
-			PullTimeout:   10 * time.Minute,
+			Enabled:   false,
+			URLPrefix: OSIEURI,
+			ImagePath: "/var/lib/images",
 		},
 		OTEL: OTEL{
 			Endpoint:         "",
@@ -465,12 +455,6 @@ func (c *Config) OSIEHandler() (http.Handler, error) {
 	oc := osie.NewConfig(
 		osie.WithURLPrefix(c.OSIE.URLPrefix),
 		osie.WithImagePath(c.OSIE.ImagePath),
-		osie.WithOCIRegistry(c.OSIE.OCIRegistry),
-		osie.WithOCIRepository(c.OSIE.OCIRepository),
-		osie.WithOCIReference(c.OSIE.OCIReference),
-		osie.WithOCIUsername(c.OSIE.OCIUsername),
-		osie.WithOCIPassword(c.OSIE.OCIPassword),
-		osie.WithPullTimeout(c.OSIE.PullTimeout),
 	)
 	return oc.Handle()
 }
@@ -486,25 +470,6 @@ func (c *Config) OSIETFTPHandler(log logr.Logger) tftphandler.Handler {
 		osie.WithImagePath(c.OSIE.ImagePath),
 	)
 	return oc.TFTPHandler(log)
-}
-
-// osieStart starts the OSIE background service (OCI image pulling).
-// Returns nil if the OSIE service is disabled.
-func (c *Config) osieStart(ctx context.Context, log logr.Logger) error {
-	if !c.OSIE.Enabled {
-		return nil
-	}
-	oc := osie.NewConfig(
-		osie.WithURLPrefix(c.OSIE.URLPrefix),
-		osie.WithImagePath(c.OSIE.ImagePath),
-		osie.WithOCIRegistry(c.OSIE.OCIRegistry),
-		osie.WithOCIRepository(c.OSIE.OCIRepository),
-		osie.WithOCIReference(c.OSIE.OCIReference),
-		osie.WithOCIUsername(c.OSIE.OCIUsername),
-		osie.WithOCIPassword(c.OSIE.OCIPassword),
-		osie.WithPullTimeout(c.OSIE.PullTimeout),
-	)
-	return oc.Start(ctx, log)
 }
 
 // Start will run Smee non-HTTP services (DHCP, TFTP, syslog).
@@ -533,15 +498,6 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 			}
 			<-ctx.Done()
 			log.Info("syslog server stopped")
-			return nil
-		})
-	}
-
-	if c.OSIE.Enabled {
-		g.Go(func() error {
-			if err := c.osieStart(ctx, log.WithName("osie")); err != nil {
-				return fmt.Errorf("starting OSIE service: %w", err)
-			}
 			return nil
 		})
 	}

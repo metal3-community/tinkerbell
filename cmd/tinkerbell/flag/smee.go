@@ -128,12 +128,6 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(OSIEEnabled, ffval.NewValueDefault(&sc.Config.OSIE.Enabled, sc.Config.OSIE.Enabled))
 	fs.Register(OSIEURLPrefix, ffval.NewValueDefault(&sc.Config.OSIE.URLPrefix, sc.Config.OSIE.URLPrefix))
 	fs.Register(OSIEImagePath, ffval.NewValueDefault(&sc.Config.OSIE.ImagePath, sc.Config.OSIE.ImagePath))
-	fs.Register(OSIEOCIRegistry, ffval.NewValueDefault(&sc.Config.OSIE.OCIRegistry, sc.Config.OSIE.OCIRegistry))
-	fs.Register(OSIEOCIRepository, ffval.NewValueDefault(&sc.Config.OSIE.OCIRepository, sc.Config.OSIE.OCIRepository))
-	fs.Register(OSIEOCIReference, ffval.NewValueDefault(&sc.Config.OSIE.OCIReference, sc.Config.OSIE.OCIReference))
-	fs.Register(OSIEOCIUsername, ffval.NewValueDefault(&sc.Config.OSIE.OCIUsername, sc.Config.OSIE.OCIUsername))
-	fs.Register(OSIEOCIPassword, ffval.NewValueDefault(&sc.Config.OSIE.OCIPassword, sc.Config.OSIE.OCIPassword))
-	fs.Register(OSIEPullTimeout, ffval.NewValueDefault(&sc.Config.OSIE.PullTimeout, sc.Config.OSIE.PullTimeout))
 
 	// Log level
 	fs.Register(SmeeLogLevel, ffval.NewValueDefault(&sc.LogLevel, sc.LogLevel))
@@ -479,36 +473,6 @@ var OSIEURLPrefix = Config{
 var OSIEImagePath = Config{
 	Name:  "osie-image-path",
 	Usage: "[osie] directory path where OSIE images are stored",
-}
-
-var OSIEOCIRegistry = Config{
-	Name:  "osie-oci-registry",
-	Usage: "[osie] OCI registry URL (e.g., ghcr.io, docker.io)",
-}
-
-var OSIEOCIRepository = Config{
-	Name:  "osie-oci-repository",
-	Usage: "[osie] OCI repository path (e.g., tinkerbell/captain/artifacts)",
-}
-
-var OSIEOCIReference = Config{
-	Name:  "osie-oci-reference",
-	Usage: "[osie] OCI image reference - tag or digest (e.g., latest, v1.2.3, sha256:...)",
-}
-
-var OSIEOCIUsername = Config{
-	Name:  "osie-oci-username",
-	Usage: "[osie] optional username for OCI registry authentication",
-}
-
-var OSIEOCIPassword = Config{
-	Name:  "osie-oci-password",
-	Usage: "[osie] optional password for OCI registry authentication",
-}
-
-var OSIEPullTimeout = Config{
-	Name:  "osie-pull-timeout",
-	Usage: "[osie] timeout for pulling OCI images",
 }
 
 // Tink Server flags.

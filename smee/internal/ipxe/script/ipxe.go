@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 
 	"github.com/go-logr/logr"
@@ -229,7 +230,11 @@ func (h *Handler) buildHook(span trace.Span, hw hardware.Info) Hook {
 		auto.InitrdName = h.InitrdName + "-" + arch
 	}
 	if hw.OSIE.BaseURL != nil && hw.OSIE.BaseURL.String() != "" {
-		auto.DownloadURL = hw.OSIE.BaseURL.String()
+		u := *hw.OSIE.BaseURL
+		if osieURL, err := url.Parse(h.OSIEURL); err == nil && osieURL.Path != "" && (u.Path == "" || u.Path == "/") {
+			u.Path = osieURL.Path
+		}
+		auto.DownloadURL = u.String()
 	}
 	if hw.OSIE.Kernel != "" {
 		auto.KernelName = hw.OSIE.Kernel

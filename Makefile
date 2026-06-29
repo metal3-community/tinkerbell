@@ -11,7 +11,7 @@ endif
 CGO_ENABLED := 0
 export CGO_ENABLED
 
-GITHUB_REPOSITORY_OWNER ?= tinkerbell
+GITHUB_REPOSITORY_OWNER ?= $(shell git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/[^/]+\.git.*|\1|;s|.*[:/]([^/]+)/[^/]+$$|\1|')
 HELM_REPO_NAME ?= ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts
 
 ########### Tools variables ###########

@@ -304,7 +304,7 @@ func NewConfig(c Config, publicIP netip.Addr) *Config {
 			StaticIPAMEnabled: false,
 		},
 		OSIE: OSIE{
-			Enabled:   false,
+			Enabled:   true,
 			URLPrefix: OSIEURI,
 			ImagePath: "/var/lib/images",
 		},
@@ -364,7 +364,7 @@ func (c *Config) ScriptHandler(log logr.Logger) http.Handler {
 	jh := script.Handler{
 		Logger:                log,
 		Backend:               c.Backend,
-		OSIEURL:               c.IPXE.HTTPScriptServer.OSIEURL.String(),
+		OSIEURL:               c.osieURL(),
 		ExtraKernelParams:     c.IPXE.HTTPScriptServer.ExtraKernelArgs,
 		PublicSyslogFQDN:      c.DHCP.SyslogIP.String(),
 		TinkServerTLS:         c.TinkServer.UseTLS,
@@ -398,7 +398,7 @@ func (c *Config) ScriptTFTPHandler(log logr.Logger) tftphandler.Handler {
 	jh := script.Handler{
 		Logger:                log,
 		Backend:               c.Backend,
-		OSIEURL:               c.IPXE.HTTPScriptServer.OSIEURL.String(),
+		OSIEURL:               c.osieURL(),
 		ExtraKernelParams:     c.IPXE.HTTPScriptServer.ExtraKernelArgs,
 		PublicSyslogFQDN:      c.DHCP.SyslogIP.String(),
 		TinkServerTLS:         c.TinkServer.UseTLS,
@@ -411,6 +411,18 @@ func (c *Config) ScriptTFTPHandler(log logr.Logger) tftphandler.Handler {
 		InitrdName:            c.IPXE.HTTPScriptServer.InitrdName,
 	}
 	return tftphandler.HandlerFunc(jh.HandleTFTP)
+}
+
+// osieURL returns the effective OSIE download URL for iPXE scripts.
+// When the OSIE service is enabled and the configured OSIEURL has no path,
+// the OSIE URL prefix is applied so that hw.OSIE.BaseURL overrides in
+// buildHook can inherit the correct path via url.Parse.
+func (c *Config) osieURL() string {
+	u := *c.IPXE.HTTPScriptServer.OSIEURL
+	if c.OSIE.Enabled && u.Path == "" && c.OSIE.URLPrefix != "" {
+		u.Path = c.OSIE.URLPrefix
+	}
+	return u.String()
 }
 
 // ISOHandler returns an http.Handler that serves patched ISO images.

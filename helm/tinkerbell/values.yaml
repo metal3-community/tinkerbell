@@ -239,7 +239,7 @@ deployment:
   # Additional volumeMounts on the output Deployment definition.
   volumeMounts:
     - name: captain-artifacts
-      mountPath: /captain
+      mountPath: /var/lib/images
   # - name: foo
   #   mountPath: "/etc/foo"
   #   subPath: "foo"

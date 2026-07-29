@@ -25,6 +25,14 @@ type SmeeConfig struct {
 	// The cmd package is responsible for putting the fields back together into a url.URL for use in service package configs.
 	DHCPIPXEScript URLBuilder
 	LogLevel       int
+	// MacvlanEnabled enables native macvlan interface setup at startup.
+	// When true the binary creates a macvlan interface in the host netns and
+	// moves it into the pod netns before starting the DHCP server.
+	// Requires CAP_NET_ADMIN + CAP_SYS_ADMIN and hostPID=true.
+	MacvlanEnabled bool
+	// MacvlanSourceInterface is the host parent interface for the macvlan.
+	// When empty the host's default-route interface is used.
+	MacvlanSourceInterface string
 }
 
 var KubeIndexesSmee = map[kube.IndexType]kube.Index{
@@ -48,6 +56,8 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(DHCPModeFlag, &sc.Config.DHCP.Mode)
 	fs.Register(DHCPBindAddr, &ntip.Addr{Addr: &sc.Config.DHCP.BindAddr})
 	fs.Register(DHCPBindInterface, ffval.NewValueDefault(&sc.Config.DHCP.BindInterface, sc.Config.DHCP.BindInterface))
+	fs.Register(DHCPMacvlanEnabled, ffval.NewValueDefault(&sc.MacvlanEnabled, sc.MacvlanEnabled))
+	fs.Register(DHCPMacvlanSourceInterface, ffval.NewValueDefault(&sc.MacvlanSourceInterface, sc.MacvlanSourceInterface))
 	fs.Register(DHCPIPForPacket, &ntip.Addr{Addr: &sc.Config.DHCP.IPForPacket})
 	fs.Register(DHCPSyslogIP, &ntip.Addr{Addr: &sc.Config.DHCP.SyslogIP})
 	fs.Register(DHCPTftpIP, &ntip.Addr{Addr: &sc.Config.DHCP.TFTPIP})
@@ -124,6 +134,11 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(ISOPatchMagicString, ffval.NewValueDefault(&sc.Config.ISO.PatchMagicString, sc.Config.ISO.PatchMagicString))
 	fs.Register(ISOStaticIPAMEnabled, ffval.NewValueDefault(&sc.Config.ISO.StaticIPAMEnabled, sc.Config.ISO.StaticIPAMEnabled))
 
+	// OSIE Flags
+	fs.Register(OSIEEnabled, ffval.NewValueDefault(&sc.Config.OSIE.Enabled, sc.Config.OSIE.Enabled))
+	fs.Register(OSIEURLPrefix, ffval.NewValueDefault(&sc.Config.OSIE.URLPrefix, sc.Config.OSIE.URLPrefix))
+	fs.Register(OSIEImagePath, ffval.NewValueDefault(&sc.Config.OSIE.ImagePath, sc.Config.OSIE.ImagePath))
+
 	// Log level
 	fs.Register(SmeeLogLevel, ffval.NewValueDefault(&sc.LogLevel, sc.LogLevel))
 
@@ -144,6 +159,10 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	// PXE-over-HTTP flags
 	fs.Register(PXEHTTPEnabled, ffval.NewValueDefault(&sc.Config.PXEHTTP.Enabled, sc.Config.PXEHTTP.Enabled))
 	fs.Register(PXEHTTPPathPrefix, ffval.NewValueDefault(&sc.Config.PXEHTTP.PathPrefix, sc.Config.PXEHTTP.PathPrefix))
+
+	// DHCP Leader Election Flags
+	fs.Register(DHCPEnableLeaderElection, ffval.NewValueDefault(&sc.Config.EnableLeaderElection, sc.Config.EnableLeaderElection))
+	fs.Register(DHCPLeaderElectionNamespace, ffval.NewValueDefault(&sc.Config.LeaderElectionNamespace, sc.Config.LeaderElectionNamespace))
 }
 
 // Convert CLI specific fields to smee.Config fields.
@@ -257,6 +276,16 @@ var DHCPBindAddr = Config{
 var DHCPBindInterface = Config{
 	Name:  "dhcp-bind-interface",
 	Usage: "[dhcp] DHCP server bind interface",
+}
+
+var DHCPMacvlanEnabled = Config{
+	Name:  "dhcp-macvlan-enabled",
+	Usage: "[dhcp] create a per-pod macvlan interface at startup and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN, and hostPID=true",
+}
+
+var DHCPMacvlanSourceInterface = Config{
+	Name:  "dhcp-macvlan-source-interface",
+	Usage: "[dhcp] host parent interface for the macvlan (empty = auto-detect from host default route)",
 }
 
 var DHCPIPForPacket = Config{
@@ -471,6 +500,22 @@ var ISOStaticIPAMEnabled = Config{
 	Usage: "[iso] enable static IPAM when patching the source (upstream) ISO",
 }
 
+// OSIE flags.
+var OSIEEnabled = Config{
+	Name:  "osie-enabled",
+	Usage: "[osie] enable OSIE image service",
+}
+
+var OSIEURLPrefix = Config{
+	Name:  "osie-url-prefix",
+	Usage: "[osie] URL path prefix for serving OSIE files (e.g., /images/)",
+}
+
+var OSIEImagePath = Config{
+	Name:  "osie-image-path",
+	Usage: "[osie] directory path where OSIE images are stored",
+}
+
 // Tink Server flags.
 var TinkServerAddrPort = Config{
 	Name:  "ipxe-script-tink-server-addr-port",
@@ -495,4 +540,14 @@ var SmeeLogLevel = Config{
 var DHCPEnableNetbootOptions = Config{
 	Name:  "dhcp-enable-netboot-options",
 	Usage: "[dhcp] enable sending netboot DHCP options",
+}
+
+var DHCPEnableLeaderElection = Config{
+	Name:  "dhcp-enable-leader-election",
+	Usage: "[dhcp] gate DHCP serving behind Kubernetes leader election so only a single instance serves DHCP (requires the kube backend; ignored otherwise)",
+}
+
+var DHCPLeaderElectionNamespace = Config{
+	Name:  "dhcp-leader-election-namespace",
+	Usage: "[dhcp] namespace in which the DHCP leader election Lease will be created",
 }

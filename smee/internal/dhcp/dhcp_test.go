@@ -515,7 +515,35 @@ func TestIsRaspberryPI(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := isRaspberryPI(tt.mac)
+			got := IsRaspberryPI(tt.mac)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatal(diff)
+			}
+		})
+	}
+}
+
+func TestIsRaspberryPI5(t *testing.T) {
+	tests := map[string]struct {
+		mac  net.HardwareAddr
+		want bool
+	}{
+		"not a raspberry pi": {
+			mac:  net.HardwareAddr{0x01, 0x02, 0x03, 0x04, 0x05, 0x06},
+			want: false,
+		},
+		"raspberry pi but not a pi 5": {
+			mac:  net.HardwareAddr{0xb8, 0x27, 0xeb, 0x00, 0x00, 0x00},
+			want: false,
+		},
+		"raspberry pi 5": {
+			mac:  net.HardwareAddr{0x88, 0xa2, 0x9e, 0x00, 0x00, 0x00},
+			want: true,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := IsRaspberryPI5(tt.mac)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Fatal(diff)
 			}

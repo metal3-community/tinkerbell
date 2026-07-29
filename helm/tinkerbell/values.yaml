@@ -1,21 +1,28 @@
 # TRUSTED_PROXIES=$(kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}' | tr ' ' ',')
-# LB_IP=192.168.2.116
-# the ARTIFACTS_FILE_SERVER is used to set the load balancer IP for the HookOS/nginx service object and will be used to configure TINKERBELL_IPXE_HTTP_SCRIPT_OSIE_URL in the Tinkerbell deployment.
-# ARTIFACTS_FILE_SERVER=http://192.168.2.117:7173
-# helm install tinkerbell tinkerbell/ --create-namespace --namespace tinkerbell --wait --set "trustedProxies={${TRUSTED_PROXIES}}" --set "publicIP=$LB_IP" --set "artifactsFileServer=$ARTIFACTS_FILE_SERVER" --set "deployment.agentImageTag=latest" --set "deployment.imageTag=latest"
-artifactsFileServer:
+# LB_IP=192.168.2.116=
+# helm install tinkerbell tinkerbell/ --create-namespace --namespace tinkerbell --wait --set "trustedProxies={${TRUSTED_PROXIES}}" --set "publicIP=$LB_IP" --set "deployment.agentImageTag=latest" --set "deployment.imageTag=latest"
 deployment:
   additionalEnvs: []
   # - name: MY_ENV_VAR
   #   value: "my-value"
   additionalArgs: []
   # - "--my-arg=my-value"
-  affinity: {}
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: '{{ include "tinkerbell.fullname" . }}'
+              app.kubernetes.io/instance: "{{ .Release.Name }}"
+          topologyKey: kubernetes.io/hostname
   agentImage: ghcr.io/tinkerbell/tink-agent
   # agentImageTag is here as a placeholder and to show its possible to be set.
   # It is not set because in the deployment.yaml a coalesce is used with this value
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
   agentImageTag:
+  captainImage: ghcr.io/rpardini/captain/artifacts
+  captainImageTag: v0.0.0-0ab6603-trixie-full
+  annotations: {}
   daemonSet:
     enabled: false
   envs:
@@ -44,76 +51,107 @@ deployment:
       tlsCertFile: ""
       tlsKeyFile: ""
       trustedProxies: ""
+      maxprocsEnable: true
+      memlimitRatio: 0.9
     rufio:
       bmcConnectTimeout: "2m0s"
-      enableLeaderElection: true
-      leaderElectionNamespace: ""
+      controllerEnableLeaderElection: true
+      controllerLeaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
       logLevel: 0
       maxConcurrentReconciles: 1
       powerCheckInterval: "30m0s"
     secondstar:
-      bindPort: 2222
-      hostKeyPath: ""
-      ipmitoolPath: "/usr/sbin/ipmitool"
+      port: 2222
+      hostKey: ""
       idleTimeout: "15m"
       logLevel: 0
-    smee:
-      dhcpBindAddr: ""
-      dhcpBindInterface: ""
-      dhcpEnabled: true
-      dhcpIPForPacket: ""
-      dhcpIpxeHttpBinaryHost: ""
-      dhcpIpxeHttpBinaryPath: "/ipxe/binary"
-      dhcpIpxeHttpBinaryPort: 7080
-      dhcpIpxeHttpBinaryScheme: "http"
-      dhcpIpxeHttpScriptHost: ""
-      dhcpIpxeHttpScriptPath: "/ipxe/script/auto.ipxe"
-      dhcpIpxeHttpScriptPort: 7080
-      dhcpIpxeHttpScriptPrependMac: true
-      dhcpIpxeHttpScriptScheme: "http"
-      dhcpMode: "reservation" # reservation, proxy, auto-proxy
-      dhcpSyslogIP: ""
-      dhcpTftpIP: ""
-      dhcpTftpPort: 69
-      ipxeBinaryInjectMacAddrFormat: "" # one of colon, dot, dash, no-delimiter, empty. defaults to colon when empty.
-      ipxeEmbeddedScriptPatch: ""
-      ipxeHttpBinaryEnabled: true
-      ipxeHttpScriptEnabled: true
-      ipxeHttpScriptExtraKernelArgs: [] # Additional kernel arguments to pass to the OSIE. (k=v k=v) that are appended to the kernel cmdline in the iPXE script
-      ipxeHttpScriptKernelName: "vmlinuz" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
-      ipxeHttpScriptInitrdName: "initramfs" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
-      ipxeHttpScriptTrustedProxies: ""
-      ipxeHttpScriptOsieURL: ""
-      ipxeHttpScriptRetries: 1
-      ipxeHttpScriptRetryDelay: 1
-      ipxeOverrideArchMapping: "" # a comma separated list of <arch>=<binary> pairs. See the iPXE Architecture Mapping documentation for more details.
-      ipxeScriptTinkServerAddrPort: ""
-      ipxeScriptTinkServerInsecureTLS: false
-      ipxeScriptTinkServerUseTLS: false
-      isoEnabled: true
-      isoPatchMagicString: ""
-      isoStaticIPAMEnabled: true
-      isoUpstreamURL: ""
+    osie:
+      debugMode: false
+      imagePath: "/var/lib/images"
       logLevel: 0
-      syslogBindAddr: ""
-      syslogBindPort: 514
-      syslogEnabled: true
-      tftpBlockSize: 512
-      tftpServerBindAddr: ""
-      tftpServerBindPort: 69
-      tftpServerEnabled: true
-      tftpTimeout: "10s"
-      tftpSinglePort: true # if true, use single port mode for TFTP server
-      tftpAssetDir: "" # serves extra TFTP files from this (in-pod) directory if set
-      pxeHttpEnabled: false # serve pxelinux.cfg and the TFTP asset dir over HTTP (for u-boot pxe-over-http)
-      pxeHttpPathPrefix: "/tftp/" # URL path prefix to serve pxelinux.cfg and TFTP assets under over HTTP
+    dhcp:
+      bindAddr: ""
+      bindInterface: ""
+      enabled: true
+      enableNetbootOptions: true
+      ipForPacket: ""
+      ipxeHttpBinaryHost: ""
+      ipxeHttpBinaryPath: "/ipxe/binary"
+      ipxeHttpBinaryPort: 7080
+      ipxeHttpBinaryScheme: "http"
+      ipxeHttpScriptHost: ""
+      ipxeHttpScriptPath: "/ipxe/script/auto.ipxe"
+      ipxeHttpScriptPort: 7080
+      ipxeHttpScriptPrependMac: true
+      ipxeHttpScriptScheme: "http"
+      mode: "reservation" # reservation, proxy, auto-proxy
+      syslogIP: ""
+      tftpIP: ""
+      tftpPort: 69
+      # Leader election ensures only a single Smee instance serves DHCP at a time.
+      # This replaces host network interface (macvlan) management and is compatible
+      # with per-pod IPs assigned by CNIs such as Multus macvlan. Requires the kube
+      # backend; ignored for file/none backends.
+      enableLeaderElection: true
+      leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
+      # macvlanEnabled enables native macvlan interface setup inside the tinkerbell
+      # binary (no init container required). The binary creates a per-pod macvlan
+      # interface (mv<13-hex-chars-of-pod-UID>) in the host netns and moves it into
+      # the pod netns before starting the DHCP server.
+      # Requires hostPID=true and CAP_NET_ADMIN + CAP_SYS_ADMIN (added automatically
+      # when this is true).
+      macvlanEnabled: false
+      # macvlanSourceInterface is the host parent interface for the macvlan.
+      # Leave empty to auto-detect from the host's default route.
+      macvlanSourceInterface: ""
+    smee:
+      logLevel: 0
+    ipxe:
+      binaryInjectMacAddrFormat: "" # one of colon, dot, dash, no-delimiter, empty. defaults to colon when empty.
+      embeddedScriptPatch: ""
+      httpBinaryEnabled: true
+      httpScriptBindAddr: ""
+      httpScriptEnabled: true
+      httpScriptExtraKernelArgs: [] # Additional kernel arguments to pass to the OSIE. (k=v k=v) that are appended to the kernel cmdline in the iPXE script
+      httpScriptInitrdName: "initramfs-trixie-full" # name of the initrd file to fetch in the iPXE script, defaults to initramfs, which becomes initramfs-<arch> in the script
+      httpScriptKernelName: "initramfs-trixie-full" # name of the kernel file to fetch in the iPXE script, defaults to vmlinuz, which becomes vmlinuz-<arch> in the script
+      httpScriptOsieUrl: ""
+      httpScriptRetries: 1
+      httpScriptRetryDelay: 1
+      httpScriptTrustedProxies: ""
+      overrideArchMapping: "" # a comma separated list of <arch>=<binary> pairs. See the iPXE Architecture Mapping documentation for more details.
+      scriptTinkServerAddrPort: ""
+      scriptTinkServerInsecureTls: false
+      scriptTinkServerUseTls: false
+    tftp:
+      assetDir: "" # serves extra TFTP files from this (in-pod) directory if set
+      blockSize: 512
+      serverBindAddr: ""
+      serverBindPort: 69
+      serverEnabled: true
+      singlePort: true # if true, use single port mode for TFTP server
+      timeout: "10s"
+    pxeHttp:
+      enabled: false # serve pxelinux.cfg and the TFTP asset dir over HTTP (for u-boot pxe-over-http)
+      pathPrefix: "/tftp/" # URL path prefix to serve pxelinux.cfg and TFTP assets under over HTTP
+    syslog:
+      bindAddr: ""
+      bindPort: 514
+      enabled: true
+    iso:
+      enabled: true
+      patchMagicString: ""
+      staticIpamEnabled: true
+      upstreamUrl: ""
+    https:
+      bindPort: 7272
     tinkController:
       enableLeaderElection: true
-      leaderElectionNamespace: ""
+      leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
       logLevel: 0
       maxConcurrentReconciles: 1
-      referenceAllowListRules: []
-      referenceDenyListRules: []
+      referenceAllowListRules: {}
+      referenceDenyListRules: {}
     tinkServer:
       autoDiscoveryAutoEnrollmentEnabled: false
       autoDiscoveryEnabled: false
@@ -134,20 +172,11 @@ deployment:
   hostNetwork: false
   image: ghcr.io/tinkerbell/tinkerbell
   imagePullPolicy: IfNotPresent
+  initContainers: []
   # imageTag is here as a placeholder and to show its possible to be set.
   # It is not set because in the deployment.yaml a coalesce is used with this value
   # and the .Chart.AppVersion. This allows CI and the release process to set the value properly.
   imageTag:
-  init:
-    enabled: true
-    # if `interfaceMode: ipvlan`, then ghcr.io/jacobweinstock/relay-init:v0.1.0 (has nmap and nmap-scripts) is required. Otherwise, alpine can be used.
-    image: ghcr.io/jacobweinstock/relay-init:v0.1.0
-    # interfaceMode determines how we create the interface needed to listen for DHCP broadcast traffic.
-    # by default macvlan is used. ipvlan is the only other option.
-    interfaceMode: macvlan
-    # sourceInterface is the Host/Node interface to use for listening for DHCP broadcast packets.
-    # When unset, the interface from the default route will be used.
-    # sourceInterface: eno1
   nodeSelector: {}
   replicas: 1
   resources:
@@ -160,7 +189,47 @@ deployment:
   selector: {}
   strategy:
     type: RollingUpdate
+  # Kubernetes probes configuration
+  # Uses Smee's /healthcheck endpoint on the HTTP script server port (7171)
+  probes:
+    # Liveness probe - restarts the container if it fails
+    liveness:
+      enabled: true
+      httpGet:
+        path: /healthcheck
+        port: http
+        scheme: HTTP
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    # Readiness probe - removes pod from service endpoints if it fails
+    readiness:
+      enabled: true
+      httpGet:
+        path: /healthcheck
+        port: http
+        scheme: HTTP
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    # Startup probe - gives the container time to start before liveness kicks in
+    startup:
+      enabled: true
+      httpGet:
+        path: /healthcheck
+        port: http
+        scheme: HTTP
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 30
+      successThreshold: 1
   tolerations: []
+  topologySpreadConstraints: []
   # Additional volumes on the output Deployment definition.
   volumes: []
   # - name: foo
@@ -186,6 +255,7 @@ rbac:
   # Non-resource URL rule example:
   # - nonResourceURLs: ["/healthz"] # Required. Non-resource URL paths.
   #   verbs: ["get"]                # Required. Allowed operations.
+  create: true
   name: tinkerbell
   type: ClusterRole # or Role
   secrets:
@@ -195,6 +265,7 @@ service:
   annotations: {}
   labels:
     app: tinkerbell
+  externalTrafficPolicy: Local
   lbClass: "kube-vip.io/kube-vip-class"
   loadBalancerIP: ""
   name: tinkerbell
@@ -229,8 +300,13 @@ service:
       protocol: TCP
   selector:
     app: tinkerbell
+  sessionAffinity: None
+  sessionAffinityConfig: {}
   type: LoadBalancer
 trustedProxies: []
+
+# Enable creating the tinkerbell configmap
+createConfigmap: true
 
 optional:
   # enable migration to convert a 0.6.2 values.yaml to a v0.19.x values.yaml.
@@ -239,28 +315,6 @@ optional:
   migration:
     enabled: false
 
-  # osie (Operating System Installation Environment) objects are shared across HookOS and CaptainOS.
-  # They handle the file server for serving Artifacts.
-  osie:
-    deployment:
-      strategy:
-        type: RollingUpdate
-    hostNetwork: false
-    image: nginx:1.29.5
-    name: hookos # this value is deprecated and will be updated to "osie" in a future release.
-    nodeSelector: {}
-    tolerations: []
-    port: 7173
-    selector:
-      app: hookos # this value is deprecated and will be updated to "osie" in a future release.
-    service:
-      annotations: {}
-      labels: {}
-      lbClass: "kube-vip.io/kube-vip-class"
-      loadBalancerIP: ""
-      type: LoadBalancer
-    affinity: {}
-
   # captainos objects enable downloading and serving CaptainOS artifacts.
   # Optional, disabled by default.
   # Can be enabled together with hookos.
@@ -268,50 +322,6 @@ optional:
     enabled: false
     image: ghcr.io/tinkerbell/captain/artifacts:v0.1.0
     pullPolicy: IfNotPresent
-
-  # hookos objects enable downloading and serving HookOS artifacts.
-  # Optional, enabled by default.
-  hookos:
-    arch: both # x86_64, aarch64, both
-    # downloadURL only works with the > 0.8.1 Hook release because
-    # previous Hook versions didn't provide a checksum file.
-    downloadURL: https://github.com/tinkerbell/hook/releases/download/v0.11.1
-    enabled: true
-    extension: tar.gz # iso, tar.gz, both
-    kernelVersion: both # 5.10, 6.6, both
-    persistence:
-      # If existingClaim is set, the local persistence volume (localPersistentVolume) objects will NOT be created.
-      # Use this to point to an existing production grade storage class.
-      existingClaim: ""
-      # While local storage is the default, it is not recommended for production use.
-      localPersistentVolume:
-        accessModes:
-          - ReadWriteMany
-        extraLabels: {}
-        name: hook-artifacts
-        # this path must already exist on the node
-        path: /tmp
-        size: 2Gi
-        storageClassName: local-storage
-    scriptImage: bash:5.2.37
-    # the following are deprecated under optional.hookos. Set these values via optional.osie.
-    deployment:
-      strategy:
-        type:
-    hostNetwork:
-    image:
-    name:
-    nodeSelector: {}
-    tolerations: []
-    port:
-    selector:
-      app:
-    service:
-      annotations: {}
-      lbClass:
-      loadBalancerIP: 
-      type:
-    affinity: {}
 
   # kubevip objects are used to provide a LoadBalancer IP for the Tinkerbell services.
   # Optional, enabled by default.
@@ -324,7 +334,7 @@ optional:
     #   - name: MY_ENV_VAR
     #     value: my-value
     additionalEnv: []
-    enabled: true
+    enabled: false
     image: ghcr.io/kube-vip/kube-vip:v1.0.0
     imagePullPolicy: IfNotPresent
     # Customize the interface KubeVIP advertises on. When unset, KubeVIP will autodetect the interface.

@@ -11,7 +11,7 @@ func TestProviderString(t *testing.T) {
 		provider ProviderName
 		expected string
 	}{
-		"IPMITool":   {ProviderNameIPMITool, "ipmitool"},
+		"IPMITool":   {ProviderNameIPMITool, "ipmi"},
 		"AsrockRack": {ProviderNameAsrockRack, "asrockrack"},
 		"Gofish":     {ProviderNameGofish, "gofish"},
 		"IntelAMT":   {ProviderNameIntelAMT, "IntelAMT"},

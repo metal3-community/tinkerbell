@@ -21,6 +21,7 @@ type BackendReader interface {
 	FilterHardware(ctx context.Context, opts data.HardwareFilter) (*tinkerbell.Hardware, error)
 }
 
+// Info holds the unified hardware data used by iPXE script and TFTP serving paths.
 type Info struct {
 	AllowNetboot  bool // If true, the client will be provided netboot options in the DHCP offer/ack.
 	Console       string

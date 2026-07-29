@@ -20,12 +20,12 @@ type RedfishOptions struct {
 	SystemName string `json:"systemName,omitempty"`
 }
 
-// IPMITOOLOptions contains the ipmitool provider specific options.
+// IPMITOOLOptions contains the ipmi provider specific options.
 type IPMITOOLOptions struct {
-	// Port that ipmitool will use for calls.
+	// Port that ipmi will use for calls.
 	// +optional
 	Port int `json:"port,omitempty"`
-	// CipherSuite that ipmitool will use for calls.
+	// CipherSuite that ipmi will use for calls.
 	// +optional
 	CipherSuite string `json:"cipherSuite,omitempty"`
 }

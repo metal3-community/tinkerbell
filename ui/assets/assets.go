@@ -3,6 +3,8 @@ package assets
 
 import "embed"
 
+//go:generate go run ../../script/tailwindcss  --cwd ../../  -i ui/assets/css/input.css -o ui/assets/css/output.css --minify
+
 // Artwork contains embedded artwork files (logos, icons).
 //
 //go:embed artwork/*

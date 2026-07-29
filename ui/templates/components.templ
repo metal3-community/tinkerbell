@@ -167,7 +167,7 @@ templ CodeBlockYAML(code string) {
 templ CodeBlockWithCopy(code, id string) {
 	<div class="relative">
 		<div class="absolute top-2 right-2 z-10">
-			<button 
+			<button
 				data-copy-target={ id }
 				class="copy-btn inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors border border-gray-600"
 			>
@@ -185,7 +185,7 @@ templ CodeBlockWithCopy(code, id string) {
 templ CodeBlockYAMLWithCopy(code, id string) {
 	<div class="relative">
 		<div class="absolute top-2 right-2 z-10">
-			<button 
+			<button
 				data-copy-target={ id }
 				class="copy-btn inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors border border-gray-600"
 			>
@@ -400,7 +400,7 @@ templ CRDCard(crdInfo CRDInfo) {
 					<div class="px-5 pb-4">
 						<!-- Expand/Collapse All buttons -->
 						<div class="flex justify-end gap-2 mb-3 pb-2 border-b border-gray-100 dark:border-darkBorder">
-							<button 
+							<button
 								type="button"
 								onclick="this.closest('.px-5').querySelectorAll('details').forEach(d => d.open = true)"
 								class="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-tink-teal-600 dark:hover:text-tink-teal-400 hover:bg-gray-100 dark:hover:bg-darkBorderSoft rounded transition-colors"
@@ -410,7 +410,7 @@ templ CRDCard(crdInfo CRDInfo) {
 								</svg>
 								Expand All
 							</button>
-							<button 
+							<button
 								type="button"
 								onclick="this.closest('.px-5').querySelectorAll('details').forEach(d => d.open = false)"
 								class="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-tink-teal-600 dark:hover:text-tink-teal-400 hover:bg-gray-100 dark:hover:bg-darkBorderSoft rounded transition-colors"
@@ -441,7 +441,7 @@ templ CRDCard(crdInfo CRDInfo) {
 					<div class="px-5 pb-4">
 						<!-- Expand/Collapse All buttons -->
 						<div class="flex justify-end gap-2 mb-3 pb-2 border-b border-gray-100 dark:border-darkBorder">
-							<button 
+							<button
 								type="button"
 								onclick="this.closest('.px-5').querySelectorAll('details').forEach(d => d.open = true)"
 								class="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-tink-teal-600 dark:hover:text-tink-teal-400 hover:bg-gray-100 dark:hover:bg-darkBorderSoft rounded transition-colors"
@@ -451,7 +451,7 @@ templ CRDCard(crdInfo CRDInfo) {
 								</svg>
 								Expand All
 							</button>
-							<button 
+							<button
 								type="button"
 								onclick="this.closest('.px-5').querySelectorAll('details').forEach(d => d.open = false)"
 								class="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-tink-teal-600 dark:hover:text-tink-teal-400 hover:bg-gray-100 dark:hover:bg-darkBorderSoft rounded transition-colors"

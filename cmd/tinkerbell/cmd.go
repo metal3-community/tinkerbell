@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"github.com/avast/retry-go/v4"
 	"github.com/go-logr/logr"
 	"github.com/peterbourgon/ff/v4"
@@ -24,6 +25,7 @@ import (
 	"github.com/tinkerbell/tinkerbell/tink/server"
 	"github.com/tinkerbell/tinkerbell/tootles"
 	"github.com/tinkerbell/tinkerbell/ui"
+	"go.uber.org/automaxprocs/maxprocs"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/credentials"
 )
@@ -35,8 +37,8 @@ var (
 	embeddedKubeControllerManagerExecute func(context.Context, string) error
 )
 
-func Execute(ctx context.Context, cancel context.CancelFunc, args []string) error { //nolint:cyclop // Will need to look into reducing the cyclomatic complexity.
-	startTime := time.Now() // used in the HTTP healthcheck handler to report uptime.
+func Execute(ctx context.Context, cancel context.CancelFunc, args []string) error { //nolint:cyclop,gocognit // Will need to look into reducing the cyclomatic complexity.
+	startTime := time.Now()
 	globals := &flag.GlobalConfig{
 		BackendKubeConfig:    kubeConfig(),
 		PublicIP:             detectPublicIPv4(),
@@ -56,13 +58,17 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 			}
 			return netip.MustParseAddr("0.0.0.0")
 		}(),
+		MaxprocsEnable: true,
+		MemlimitRatio:  0.9,
 		EmbeddedGlobalConfig: flag.EmbeddedGlobalConfig{
 			EnableKubeAPIServer: (embeddedApiserverExecute != nil),
 			EnableETCD:          (embeddedEtcdExecute != nil),
 		},
 		BackendKubeOptions: flag.BackendKubeOptions{
-			QPS:   defaultQPS,   // Default QPS value. A negative value disables client-side ratelimiting.
-			Burst: defaultBurst, // Default burst value.
+			QPS:                         defaultQPS,      // Default QPS value. A negative value disables client-side ratelimiting.
+			Burst:                       defaultBurst,    // Default burst value.
+			APIServerHealthTimeout:      2 * time.Minute, // Default timeout: 2 minutes to prevent permanent error loops
+			APIServerHealthPollInterval: 2 * time.Second, // Default poll interval: check every 2 seconds
 		},
 	}
 
@@ -96,9 +102,8 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 
 	ssc := &flag.SecondStarConfig{
 		Config: &secondstar.Config{
-			SSHPort:      defaultSecondStarPort,
-			IPMITOOLPath: "/usr/sbin/ipmitool",
-			IdleTimeout:  15 * time.Minute,
+			SSHPort:     defaultSecondStarPort,
+			IdleTimeout: 15 * time.Minute,
 		},
 	}
 
@@ -152,6 +157,24 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 	}
 
 	log := getLogger(globals.LogLevel)
+
+	// Configure Go runtime tuning before service startup.
+	if globals.MaxprocsEnable {
+		if _, err := maxprocs.Set(maxprocs.Logger(func(f string, a ...any) {
+			log.WithName("automaxprocs").Info(fmt.Sprintf(f, a...))
+		})); err != nil {
+			log.WithName("automaxprocs").Error(err, "failed to set GOMAXPROCS automatically")
+		}
+	}
+	if globals.MemlimitRatio > 0 {
+		if _, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(globals.MemlimitRatio),
+			memlimit.WithProvider(memlimit.ApplyFallback(memlimit.FromCgroup, memlimit.FromSystem)),
+		); err != nil {
+			log.WithName("automemlimit").Error(err, "failed to set GOMEMLIMIT automatically")
+		}
+	}
+
 	cliLog := log.WithName("cli")
 	cliLog.Info("starting tinkerbell",
 		"version", build.GitRevision(),
@@ -206,6 +229,9 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		// Set UseTLS so the iPXE script template emits tinkerbell_tls=true in kernel args.
 		s.Config.TinkServer.UseTLS = true
 	}
+
+	// Smee DHCP leader election
+	s.Config.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), s.Config.EnableLeaderElection, s.Config.LeaderElectionNamespace)
 
 	// Tink Controller
 	tc.Config.LeaderElectionNamespace = leaderElectionNamespace(inCluster(), tc.Config.EnableLeaderElection, tc.Config.LeaderElectionNamespace)
@@ -286,7 +312,8 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 				return fmt.Errorf("failed to create kube backend with no indexes: %w", err)
 			}
 			// Wait for the API server to be healthy and ready.
-			if err := backendNoIndexes.WaitForAPIServer(ctx, cliLog, 20*time.Second, 5*time.Second, nil); err != nil {
+			// Use configurable timeout and poll interval to prevent permanent error loops on first boot.
+			if err := backendNoIndexes.WaitForAPIServer(ctx, cliLog, globals.BackendKubeOptions.APIServerHealthTimeout, globals.BackendKubeOptions.APIServerHealthPollInterval, nil); err != nil {
 				return fmt.Errorf("failed to wait for API server health: %w", err)
 			}
 
@@ -307,6 +334,10 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 			return fmt.Errorf("failed to create kube backend: %w", err)
 		}
 		s.Config.Backend = b
+		// Wire DHCP leader election to the kube backend so only a single Smee
+		// instance serves DHCP. Compatible with per-pod IPs from CNIs such as
+		// Multus macvlan (no host interface manipulation needed).
+		s.Config.Client = b.ClientConfig
 		h.Config.SetBackendFromFilterer(b)
 		ts.Config.SetBackends(b)
 		tc.Config.Client = b.ClientConfig
@@ -351,7 +382,7 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		s.Config.InitMetrics()
 	}
 
-	// Smee (non-HTTP services: DHCP, TFTP, syslog)
+	// Smee (non-HTTP-TFTP services: DHCP, OCI puller, syslog)
 	g.Go(func() error {
 		if !globals.EnableSmee {
 			cliLog.Info("smee service is disabled")
@@ -359,6 +390,32 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 		}
 		ll := ternary((s.LogLevel != 0), s.LogLevel, globals.LogLevel)
 		smeeLog := getLogger(ll).WithName("smee")
+
+		if s.MacvlanEnabled {
+			ifaceName, err := macvlanIfaceName()
+			if err != nil {
+				return fmt.Errorf("macvlan interface name: %w", err)
+			}
+			cleanup, err := setupMacvlan(smeeLog, s.MacvlanSourceInterface, ifaceName)
+			if err != nil {
+				return fmt.Errorf("setup macvlan: %w", err)
+			}
+			defer cleanup()
+			s.Config.DHCP.BindInterface = ifaceName
+		} else if s.Config.DHCP.BindInterface == "" {
+			// Bind DHCP to the container's primary interface so the kernel has a
+			// valid (non-loopback) source address when sending 255.255.255.255
+			// broadcast replies. Without an explicit interface, cm.IfIndex in the
+			// response may point to an interface with no routable IP, causing
+			// sendmsg to return EINVAL.
+			iface, err := defaultRouteInterface()
+			if err != nil {
+				smeeLog.Error(err, "failed to detect primary container interface for DHCP broadcast; broadcast replies may fail")
+			} else {
+				s.Config.DHCP.BindInterface = iface
+				smeeLog.Info("DHCP server bound to primary container interface", "interface", iface)
+			}
+		}
 
 		if err := s.Config.Start(ctx, smeeLog); err != nil {
 			return fmt.Errorf("failed to start smee service: %w", err)
@@ -369,6 +426,11 @@ func Execute(ctx context.Context, cancel context.CancelFunc, args []string) erro
 	// HTTP server
 	g.Go(func() error {
 		return startHTTPServer(ctx, globals, s, h, uic, startTime)
+	})
+
+	// TFTP server
+	g.Go(func() error {
+		return startTFTPServer(ctx, globals, s)
 	})
 
 	// Tink Server

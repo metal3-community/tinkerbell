@@ -77,13 +77,13 @@ func (b BMCOptions) Translate(host string) []bmclib.Option {
 		}
 	}
 
-	// ipmitool options
-	if b.IPMITOOL != nil {
-		if b.IPMITOOL.Port != 0 {
-			o = append(o, bmclib.WithIpmitoolPort(strconv.Itoa(b.IPMITOOL.Port)))
+	// ipmi options
+	if b.IPMI != nil {
+		if b.IPMI.Port != 0 {
+			o = append(o, bmclib.WithIpmitoolPort(strconv.Itoa(b.IPMI.Port)))
 		}
-		if b.IPMITOOL.CipherSuite != "" {
-			o = append(o, bmclib.WithIpmitoolCipherSuite(b.IPMITOOL.CipherSuite))
+		if b.IPMI.CipherSuite != "" {
+			o = append(o, bmclib.WithIpmitoolCipherSuite(b.IPMI.CipherSuite))
 		}
 	}
 

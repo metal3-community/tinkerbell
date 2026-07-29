@@ -39,9 +39,9 @@ func (b *Backend) FilterBMCMachine(ctx context.Context, opts data.HardwareFilter
 	}
 
 	response.Host = bmcMachine.Spec.Connection.Host
-	if bmcMachine.Spec.Connection.ProviderOptions != nil && bmcMachine.Spec.Connection.ProviderOptions.IPMITOOL != nil {
-		response.Port = ternary(bmcMachine.Spec.Connection.ProviderOptions.IPMITOOL.Port == 0, defaultIPMIPort, bmcMachine.Spec.Connection.ProviderOptions.IPMITOOL.Port)
-		response.CipherSuite = ternary(bmcMachine.Spec.Connection.ProviderOptions.IPMITOOL.CipherSuite == "", defaultIPMICipherSuite, bmcMachine.Spec.Connection.ProviderOptions.IPMITOOL.CipherSuite)
+	if bmcMachine.Spec.Connection.ProviderOptions != nil && bmcMachine.Spec.Connection.ProviderOptions.IPMI != nil {
+		response.Port = ternary(bmcMachine.Spec.Connection.ProviderOptions.IPMI.Port == 0, defaultIPMIPort, bmcMachine.Spec.Connection.ProviderOptions.IPMI.Port)
+		response.CipherSuite = ternary(bmcMachine.Spec.Connection.ProviderOptions.IPMI.CipherSuite == "", defaultIPMICipherSuite, bmcMachine.Spec.Connection.ProviderOptions.IPMI.CipherSuite)
 	}
 
 	username, password, err := b.ReadAuthSecret(ctx, bmcMachine.Spec.Connection.AuthSecretRef.Name, bmcMachine.Spec.Connection.AuthSecretRef.Namespace)

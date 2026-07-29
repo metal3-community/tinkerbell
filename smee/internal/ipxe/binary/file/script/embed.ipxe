@@ -4,7 +4,7 @@ set user-class Tinkerbell
 echo Welcome to Neverland!
 
 # Allow the operator to drop to a shell
-prompt --key 0x02 --timeout 2000 Press Ctrl-B for the iPXE command line... && shell ||
+isset ${debug_shell} && prompt --key 0x02 --timeout 2000 Press Ctrl-B for the iPXE command line... && shell ||
 
 # Random string to enable binary patching
 #a8b7e61f1075c37a793f2f92cee89f7bba00c4a8d7842ce3d40b5889032d8881

@@ -53,7 +53,7 @@ type MachineSpec struct {
 }
 
 // ProviderName is the bmclib specific provider name. Names are case insensitive.
-// +kubebuilder:validation:Pattern=(?i)^(ipmitool|asrockrack|gofish|IntelAMT|dell|supermicro|openbmc)$
+// +kubebuilder:validation:Pattern=(?i)^(ipmi|asrockrack|gofish|IntelAMT|dell|supermicro|openbmc)$
 type ProviderName string
 
 func (p ProviderName) String() string {
@@ -65,16 +65,16 @@ type ProviderOptions struct {
 	// PreferredOrder allows customizing the order that BMC providers are called.
 	// Providers added to this list will be moved to the front of the default order.
 	// Provider names are case insensitive.
-	// The default order is: ipmitool, asrockrack, gofish, intelamt, dell, supermicro, openbmc.
+	// The default order is: ipmi, asrockrack, gofish, intelamt, dell, supermicro, openbmc.
 	// +optional
 	PreferredOrder []ProviderName `json:"preferredOrder,omitempty"`
 	// IntelAMT contains the options to customize the IntelAMT provider.
 	// +optional
 	IntelAMT *IntelAMTOptions `json:"intelAMT,omitempty"`
 
-	// IPMITOOL contains the options to customize the Ipmitool provider.
+	// IPMI contains the options to customize the Ipmitool provider.
 	// +optional
-	IPMITOOL *IPMITOOLOptions `json:"ipmitool,omitempty"`
+	IPMI *IPMITOOLOptions `json:"ipmi,omitempty"`
 
 	// Redfish contains the options to customize the Redfish provider.
 	// +optional

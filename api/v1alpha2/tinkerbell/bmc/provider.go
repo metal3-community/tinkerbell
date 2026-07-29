@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	ProviderNameIPMITool   ProviderName = "ipmitool"
+	ProviderNameIPMITool   ProviderName = "ipmi"
 	ProviderNameAsrockRack ProviderName = "asrockrack"
 	ProviderNameGofish     ProviderName = "gofish"
 	ProviderNameIntelAMT   ProviderName = "IntelAMT"
@@ -19,16 +19,16 @@ type ProviderOptions struct {
 	// PreferredOrder allows customizing the order that BMC providers are called.
 	// Providers added to this list will be moved to the front of the default order.
 	// Provider names are case insensitive.
-	// The default order is: ipmitool, asrockrack, gofish, intelamt, dell, supermicro, openbmc.
+	// The default order is: ipmi, asrockrack, gofish, intelamt, dell, supermicro, openbmc.
 	// +optional
 	PreferredOrder []ProviderName `json:"preferredOrder,omitempty"`
 	// IntelAMT contains the options to customize the IntelAMT provider.
 	// +optional
 	IntelAMT *IntelAMTOptions `json:"intelAMT,omitempty"`
 
-	// IPMITOOL contains the options to customize the Ipmitool provider.
+	// IPMI contains the options to customize the Ipmitool provider.
 	// +optional
-	IPMITOOL *IPMITOOLOptions `json:"ipmitool,omitempty"`
+	IPMI *IPMITOOLOptions `json:"ipmi,omitempty"`
 
 	// Redfish contains the options to customize the Redfish provider.
 	// +optional
@@ -40,7 +40,7 @@ type ProviderOptions struct {
 }
 
 // ProviderName is the bmclib specific provider name. Names are case insensitive.
-// +kubebuilder:validation:Pattern=(?i)^(ipmitool|asrockrack|gofish|IntelAMT|dell|supermicro|openbmc)$
+// +kubebuilder:validation:Pattern=(?i)^(ipmi|asrockrack|gofish|IntelAMT|dell|supermicro|openbmc)$
 type ProviderName string
 
 func (p ProviderName) String() string {
@@ -61,12 +61,12 @@ type RedfishOptions struct {
 	SystemName string `json:"systemName,omitempty"`
 }
 
-// IPMITOOLOptions contains the ipmitool provider specific options.
+// IPMITOOLOptions contains the ipmi provider specific options.
 type IPMITOOLOptions struct {
-	// Port that ipmitool will use for calls.
+	// Port that ipmi will use for calls.
 	// +optional
 	Port int `json:"port,omitempty"`
-	// CipherSuite that ipmitool will use for calls.
+	// CipherSuite that ipmi will use for calls.
 	// +optional
 	CipherSuite string `json:"cipherSuite,omitempty"`
 }

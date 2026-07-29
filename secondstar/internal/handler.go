@@ -5,12 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 
+	ipmi "github.com/bougou/go-ipmi"
 	"github.com/gliderlabs/ssh"
 	"github.com/go-logr/logr"
 	"github.com/tinkerbell/tinkerbell/pkg/data"
@@ -34,24 +33,21 @@ type State struct {
 }
 
 // Handler returns a function that can be used as the ssh.Handler for the gliderlabs/ssh server.
-func Handler(log logr.Logger, globalState *KeyValueStore, ipmitoolPath string) func(s ssh.Session) {
+func Handler(log logr.Logger, globalState *KeyValueStore) func(s ssh.Session) {
 	return func(s ssh.Session) {
 		if st, found := globalState.Get(s.User()); found {
 			additionalSession(log, s, st)
 			return
 		}
-		initialSession(log, s, globalState, ipmitoolPath)
+		initialSession(log, s, globalState)
 	}
 }
 
 // initialSession is the handler for the initial or first session connected to the ssh server for a specific host.
-func initialSession(log logr.Logger, s ssh.Session, globalState *KeyValueStore, ipmitoolPath string) {
+func initialSession(log logr.Logger, s ssh.Session, globalState *KeyValueStore) {
 	log = log.WithValues("user", s.User(), "sessionName", s.User(), "mainSession", true)
 	log.V(2).Info("new session")
-	// Get the bmc ref from the context
-	// lookup the machine.bmc object from the cluster. This gives us the host and port and secret reference.
-	// lookup the secret object from the cluster. This gives us the user and pass.
-	// session user will eventually be the Hardware name and will be used to lookup all credential info. Also, maybe ssh key for validation.
+
 	bmc, ok := s.Context().Value(BMCDataKey).(data.BMCMachine)
 	if !ok {
 		log.V(2).Info("error getting bmc info, exiting session")
@@ -61,129 +57,79 @@ func initialSession(log logr.Logger, s ssh.Session, globalState *KeyValueStore, 
 		return
 	}
 
-	ipmitoolCMD := []string{ipmitoolPath, "-I", "lanplus", "-E", "-H", bmc.Host, "-U", bmc.User, "-p", strconv.Itoa(bmc.Port), "sol", "activate"}
-	cmd := exec.CommandContext(s.Context(), ipmitoolCMD[0], ipmitoolCMD[1:]...)
-	ptyReq, _, _ := s.Pty()
-	cmd.Env = append(cmd.Env, fmt.Sprintf("TERM=%s", ptyReq.Term))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("IPMITOOL_PASSWORD=%s", bmc.Pass))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("IPMITOOL_USERNAME=%s", bmc.User))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("IPMITOOL_CIPHER_SUITE=%s", bmc.CipherSuite))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("IPMITOOL_PORT=%d", bmc.Port))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("IPMITOOL_HOST=%s", bmc.Host))
+	port := bmc.Port
+	if port == 0 {
+		port = 623
+	}
 
-	in, err := cmd.StdinPipe()
+	client, err := ipmi.NewClient(bmc.Host, port, bmc.User, bmc.Pass)
 	if err != nil {
-		log.Error(err, "error getting stdin pipe")
-		if err := s.Exit(2); err != nil {
-			log.Error(err, "error closing session")
-		}
-		return
-	}
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Error(err, "error getting stdout pipe")
-		if err := s.Exit(2); err != nil {
-			log.Error(err, "error closing session")
-		}
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		log.Error(err, "error starting command")
+		log.Error(err, "error creating IPMI client")
 		if err := s.Exit(2); err != nil {
 			log.Error(err, "error closing session")
 		}
 		return
 	}
 
-	escapeReader, escapeWriter := io.Pipe()
-	mw := io.MultiWriter(in, escapeWriter)
+	if bmc.CipherSuite != "" {
+		id, parseErr := parseCipherSuiteID(bmc.CipherSuite)
+		if parseErr != nil {
+			log.Error(parseErr, "invalid cipher suite, using default")
+		} else {
+			client.WithCipherSuiteID(id)
+		}
+	}
 
-	exp := NewMultiWriter()
-	wr := io.MultiWriter(s, exp)
+	if err := client.Connect(s.Context()); err != nil {
+		log.Error(err, "error connecting to BMC")
+		if err := s.Exit(2); err != nil {
+			log.Error(err, "error closing session")
+		}
+		return
+	}
+	defer client.Close(context.Background())
+
+	// pr/pw aggregate stdin from all sessions; SOLActivate reads from pr.
+	pr, pw := io.Pipe()
+	defer pr.Close()
+
+	mw := NewMultiWriter()
+	mw.Add(s)
+
 	globalState.Set(s.User(), &State{
-		wg:                 sync.WaitGroup{},
-		additionalSessions: atomic.Int32{},
-		initialClosed:      make(chan struct{}),
-		multiwriter:        exp,
-		stdin:              in,
+		wg:            sync.WaitGroup{},
+		initialClosed: make(chan struct{}),
+		multiwriter:   mw,
+		stdin:         pw,
 	})
 
-	// watch for escape sequences
-	// escape sequence is ~.
-	// if ~. is detected, close the session
 	go func() {
-		for {
-			b := make([]byte, 1)
-			_, err := escapeReader.Read(b)
-			if err != nil {
-				log.Error(err, "error reading escape sequence")
-				return
-			}
-			if b[0] == '~' {
-				_, err := escapeReader.Read(b)
-				if err != nil {
-					log.Error(err, "error reading escape sequence")
-					return
-				}
-				if b[0] == '.' {
-					log.V(2).Info("escape sequence detected")
-					if err := s.Exit(0); err != nil {
-						log.Error(err, "error closing session")
-					}
-					return
-				}
-			}
-		}
+		_, _ = io.Copy(pw, s)
 	}()
 
-	go func() {
-		if _, err := io.Copy(mw, s); err != nil { // stdin
-			log.Error(err, "error copying stdin")
-		}
-	}()
-
-	go func() {
-		if _, err := io.Copy(wr, out); err != nil { // stdout
-			log.Error(err, "error copying stdout")
-		}
-	}()
-
-	if err := cmd.Wait(); err != nil {
-		ps := cmd.ProcessState
-		status, ok := ps.Sys().(syscall.WaitStatus)
-		if !ok {
-			log.Error(err, "error getting process state")
-		}
-		switch {
-		case status.Exited():
-			log.V(2).Info("process exited", "status", status.ExitStatus())
-		case status.Signaled():
-			log.V(2).Info("process signaled", "signal", status.Signal().String())
-		case status.Stopped():
-			log.V(2).Info("process stopped", "signal", status.Signal().String())
-		default:
-			log.Error(err, "error waiting for command")
-		}
+	solOpts := &ipmi.SOLActivateOptions{
+		OnActivated: func(_ uint8, _ io.Reader, out io.Writer, _ *ipmi.ActivatePayloadResponse) {
+			_, _ = io.WriteString(out, "SOL session active. Use ~. to disconnect.\n")
+		},
+		OnDeactivated: func(_ uint8, _ io.Reader, out io.Writer, _ *ipmi.ActivatePayloadResponse) {
+			_, _ = io.WriteString(out, "\r\nSOL session closed.\n")
+		},
 	}
 
-	// if there are any connected sessions, we need to signal for them to close.
+	if err := client.SOLActivate(s.Context(), pr, mw, solOpts); err != nil && !errors.Is(err, context.Canceled) {
+		log.Error(err, "SOL session error")
+	}
+
 	v, ok := globalState.Get(s.User())
 	if ok && v.additionalSessions.Load() > 0 {
-		s, ok := globalState.Get(s.User())
-		if ok {
-			s.initialClosed <- struct{}{}
+		if st, ok := globalState.Get(s.User()); ok {
+			st.initialClosed <- struct{}{}
 		}
 	}
-	v.wg.Wait()
-	globalState.Delete(s.User())
-
-	deactivateArgs := []string{ipmitoolPath, "-I", "lanplus", "-E", "-H", bmc.Host, "-U", bmc.User, "-p", strconv.Itoa(bmc.Port), "sol", "deactivate"}
-	deactivateCmd := exec.CommandContext(context.Background(), deactivateArgs[0], deactivateArgs[1:]...)
-	deactivateCmd.Env = append(deactivateCmd.Env, fmt.Sprintf("IPMITOOL_PASSWORD=%s", bmc.Pass))
-	if out, err := deactivateCmd.CombinedOutput(); err != nil {
-		// TODO: Check if the error is due to the sol already being deactivated
-		log.Error(err, "error deactivating sol", "output", string(out))
+	if ok {
+		v.wg.Wait()
 	}
+	globalState.Delete(s.User())
 
 	log.V(2).Info("session closed")
 }
@@ -201,9 +147,9 @@ func additionalSession(log logr.Logger, s ssh.Session, st *State) {
 		st.multiwriter.Remove(s)
 		st.additionalSessions.Add(-1)
 	}()
+	exit := make(chan struct{})
 	escapeReader, escapeWriter := io.Pipe()
 	mw := io.MultiWriter(st.stdin, escapeWriter)
-	exit := make(chan struct{})
 	// watch for escape sequences
 	// escape sequence is ~.
 	// if ~. is detected, close the session
@@ -253,4 +199,13 @@ func additionalSession(log logr.Logger, s ssh.Session, st *State) {
 		}
 		return
 	}
+}
+
+// parseCipherSuiteID parses a numeric string into an ipmi.CipherSuiteID.
+func parseCipherSuiteID(s string) (ipmi.CipherSuiteID, error) {
+	n, err := strconv.ParseUint(s, 10, 8)
+	if err != nil {
+		return 0, fmt.Errorf("cipher suite %q must be a decimal integer: %w", s, err)
+	}
+	return ipmi.CipherSuiteID(n), nil
 }

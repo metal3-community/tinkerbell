@@ -1,1 +1,3 @@
+#define CONSOLE_EFI
+#define CONSOLE_SERIAL
 #define	CONSOLE_SYSLOG

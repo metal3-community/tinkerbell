@@ -16,12 +16,12 @@ spec:
     #providerOptions:
     #  preferredOrder:
     #    - "redfish"
-    #    - "ipmitool"
+    #    - "ipmi"
     #  redfish:
     #    port: 443
     #    useBasicAuth: false
     #    systemName: "System.Embedded.1"
-    #  ipmitool:
+    #  ipmi:
     #    port: 623
     #    cipherSuite: "3"
     #  intelAMT:

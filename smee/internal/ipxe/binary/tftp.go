@@ -3,13 +3,10 @@ package binary
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"os"
 	"path"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/pin/tftp/v3"
@@ -19,53 +16,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TFTP config settings.
+// TFTP dispatches TFTP read requests through its configured Router.
+// The transport (listening, timeouts, block size, write rejection) is provided
+// by pkg/tftp/server; register HandleRead on that server's mux.
 type TFTP struct {
-	Log                  logr.Logger
-	EnableTFTPSinglePort bool
-	Addr                 netip.AddrPort
-	Timeout              time.Duration
-	BlockSize            int
+	Log logr.Logger
 	// Router dispatches each TFTP read request through its configured
 	// Routes in order. The caller is responsible for constructing the
 	// Router with the routes it wants to enable.
 	Router Router
 }
 
-// ListenAndServe will listen and serve iPXE binaries over TFTP.
-func (h *TFTP) ListenAndServe(ctx context.Context) error {
-	a, err := net.ResolveUDPAddr("udp", h.Addr.String())
-	if err != nil {
-		return err
-	}
-	conn, err := net.ListenUDP("udp", a)
-	if err != nil {
-		return err
-	}
-
-	h.Log.Info("starting TFTP server",
-		"addr", h.Addr.String(), "singlePort", h.EnableTFTPSinglePort,
-		"blockSize", h.BlockSize, "timeout", h.Timeout.String())
-
-	ts := tftp.NewServer(h.HandleRead, h.HandleWrite)
-	ts.SetTimeout(h.Timeout)
-	ts.SetBlockSize(h.BlockSize)
-	if h.EnableTFTPSinglePort {
-		ts.EnableSinglePort()
-	}
-
-	go func() {
-		<-ctx.Done()
-		if err := conn.Close(); err != nil {
-			h.Log.Error(err, "failed to close connection")
-		}
-		ts.Shutdown()
-	}()
-
-	return ts.Serve(conn)
-}
-
-// HandleRead handlers TFTP GET requests. The function signature satisfies the tftp.Server.readHandler parameter type.
+// HandleRead handles TFTP GET requests. The function signature satisfies both
+// the tftp.Server.readHandler parameter type and pkg/tftp's handler.HandlerFunc.
 func (h TFTP) HandleRead(filename string, rf io.ReaderFrom) error {
 	client := net.UDPAddr{}
 	if rpi, ok := rf.(tftp.OutgoingTransfer); ok {
@@ -124,17 +87,5 @@ func (h TFTP) HandleRead(filename string, rf io.ReaderFrom) error {
 		log.Error(err, "request handling failed")
 		span.SetStatus(codes.Error, err.Error())
 	}
-	return err
-}
-
-// HandleWrite handles TFTP PUT requests. It will always return an error. This library does not support PUT.
-func (h TFTP) HandleWrite(filename string, wt io.WriterTo) error {
-	err := fmt.Errorf("access_violation: %w", os.ErrPermission)
-	client := net.UDPAddr{}
-	if rpi, ok := wt.(tftp.OutgoingTransfer); ok {
-		client = rpi.RemoteAddr()
-	}
-	h.Log.Error(err, "client", client, "event", "put", "filename", filename)
-
 	return err
 }

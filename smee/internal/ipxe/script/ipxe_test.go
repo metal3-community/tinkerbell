@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -13,6 +14,12 @@ import (
 	"github.com/tinkerbell/tinkerbell/smee/internal/metric"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// metricsInit guards metric.Init so multiple tests in this package can request
+// initialization without re-registering collectors (which panics).
+var metricsInit sync.Once
+
+func initMetricsOnce() { metricsInit.Do(metric.Init) }
 
 func TestCustomScript(t *testing.T) {
 	tests := map[string]struct {
@@ -333,7 +340,7 @@ set idx:int32 0
 :retry_kernel
 kernel ${download-url}/${kernel} \
 syslog_host=${syslog_host} grpc_authority=${grpc_authority} tinkerbell_tls=${tinkerbell_tls} worker_id=${worker_id} hw_addr=${mac} \
-console=tty1 console=tty2 console=ttyAMA0,115200 console=ttyAMA1,115200 console=ttyS0,115200 console=ttyS1,115200 \
+console=tty0 console=ttyS0,115200 console=ttyS1,115200 \
 intel_iommu=on iommu=pt k=v k2=v2 initrd=${initrd} && goto download_initrd || iseq ${idx} ${retries} && goto kernel-error || inc idx && echo retry in ${retry_delay} seconds ; sleep ${retry_delay} ; goto retry_kernel
 
 :download_initrd
@@ -361,7 +368,7 @@ echo Failed to boot
 imgfree
 exit
 `
-	metric.Init()
+	initMetricsOnce()
 	h := &Handler{
 		OSIEURL:            "http://127.0.0.1",
 		ExtraKernelParams:  []string{"k=v", "k2=v2"},
@@ -381,5 +388,38 @@ exit
 	}
 	if diff := cmp.Diff(writer.Body.String(), want); diff != "" {
 		t.Fatalf("expected custom script, got %s", diff)
+	}
+}
+
+func TestStaticScriptConsoleByMAC(t *testing.T) {
+	tests := map[string]struct {
+		mac         string
+		wantConsole string
+	}{
+		"raspberry pi 5":     {mac: "88:a2:9e:00:00:00", wantConsole: "console=tty1 console=ttyAMA10,115200"},
+		"raspberry pi other": {mac: "b8:27:eb:00:00:00", wantConsole: "console=tty1 console=ttyAMA0,115200"},
+		"not a raspberry pi": {mac: "de:ed:be:ef:fe:ed", wantConsole: "console=tty0 console=ttyS0,115200 console=ttyS1,115200"},
+	}
+
+	initMetricsOnce()
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			// A nil backend forces the lookup to fail, so the handler serves the static
+			// script using the MAC address from the URL path.
+			h := &Handler{
+				OSIEURL:           "http://127.0.0.1",
+				PublicSyslogFQDN:  "127.1.1.1",
+				StaticIPXEEnabled: true,
+			}
+			writer := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/"+tt.mac+"/auto.ipxe", nil)
+			h.HandlerFunc()(writer, req)
+			if writer.Code != 200 {
+				t.Fatalf("expected status code 200, got %d", writer.Code)
+			}
+			if got := writer.Body.String(); !strings.Contains(got, tt.wantConsole+" \\") {
+				t.Errorf("expected console %q in script, got:\n%s", tt.wantConsole, got)
+			}
+		})
 	}
 }

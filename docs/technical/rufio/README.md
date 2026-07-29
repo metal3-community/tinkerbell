@@ -117,7 +117,7 @@ spec:
     providerOptions:
       redfish:
         port: 443
-      ipmitool:
+      ipmi:
         cipherSuite: 3
         port: 623
       intelAMT:
@@ -155,7 +155,7 @@ spec:
     providerOptions:
       redfish:
         port: 443
-      ipmitool:
+      ipmi:
         cipherSuite: 3
         port: 623
       intelAMT:

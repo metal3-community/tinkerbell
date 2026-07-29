@@ -240,6 +240,7 @@ duplicate keys (the Linux kernel command line is last-wins).
 | | | `ReportActionStatus` | Agent reports completion/failure of an action |
 
 The gRPC server supports:
+
 - **TLS**: When `--tls-cert-file` and `--tls-key-file` are provided.
 - **Server reflection**: Enabled for tooling like `grpcurl`.
 - **OpenTelemetry**: Tracing via `otelgrpc` stats handler.
@@ -259,6 +260,7 @@ Smee supports three DHCP modes:
 | `auto-proxy` | Like `proxy`, but automatically determines whether to respond based on whether Hardware exists for the requesting MAC. |
 
 Key DHCP options set:
+
 - **Option 54** (Server Identifier): Tinkerbell's public IP
 - **Option 66** (TFTP Server): Points to Tinkerbell's TFTP server
 - **Option 67** (Bootfile Name): iPXE binary filename or HTTP URL
@@ -287,7 +289,7 @@ SecondStar provides an SSH-to-serial-over-IPMI bridge. Operators SSH to
 via IPMI SOL (Serial Over LAN).
 
 - Idle timeout: 15 minutes (configurable)
-- Requires `ipmitool` at `/usr/sbin/ipmitool`
+- Requires `ipmi` at `/usr/sbin/ipmi`
 
 ---
 

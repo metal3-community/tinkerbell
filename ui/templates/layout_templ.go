@@ -5,10 +5,8 @@ package templates
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import (
-	"github.com/a-h/templ"
-	templruntime "github.com/a-h/templ/runtime"
-)
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
 
 // Layout is the base HTML layout for all pages.
 // baseURL is the URL prefix for all routes (e.g., "/ui").

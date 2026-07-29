@@ -85,8 +85,8 @@ github.com/bitfield/gotestdox v0.2.2 h1:x6RcPAbBbErKLnapz1QeAlf3ospg8efBsedU93CD
 github.com/bitfield/gotestdox v0.2.2/go.mod h1:D+gwtS0urjBrzguAkTM2wodsTQYFHdpx8eqRJ3N+9pY=
 github.com/blang/semver/v4 v4.0.0 h1:1PFHFE6yCCTv8C1TeyNNarDzntLi7wMI5i/pzqYIsAM=
 github.com/blang/semver/v4 v4.0.0/go.mod h1:IbckMUScFkM3pff0VJDNKRiT6TG/YpiHIM2yvyW5YoQ=
-github.com/bmc-toolbox/bmclib/v2 v2.3.6-0.20260629072632-09ffa6d9fbe6 h1:DmCmkNXTJgsyF5C6lre0gf8RCkNQjodc0JBwBf11bnQ=
-github.com/bmc-toolbox/bmclib/v2 v2.3.6-0.20260629072632-09ffa6d9fbe6/go.mod h1:6pjyQH4Ht+/pIM3F/GRJV5p32pjZ0GxoW+E/wFVld8M=
+github.com/bmc-toolbox/bmclib/v2 v2.3.6-0.20260724022505-33fe4e06a8da h1:a6AOKsS7+WMZdRDmHr0KDSBal8ab7EONFCOmc2nELoA=
+github.com/bmc-toolbox/bmclib/v2 v2.3.6-0.20260724022505-33fe4e06a8da/go.mod h1:6pjyQH4Ht+/pIM3F/GRJV5p32pjZ0GxoW+E/wFVld8M=
 github.com/bmc-toolbox/common v0.0.1 h1:9Phffpmv1S0Qcfu/BD5j2rWoYMQ/tkA1sZs/9tmohsE=
 github.com/bmc-toolbox/common v0.0.1/go.mod h1:Cdnkm+edb6C0pVkyCrwh3JTXAe0iUF9diDG/DztPI9I=
 github.com/bombsimon/logrusr/v2 v2.0.1 h1:1VgxVNQMCvjirZIYaT9JYn6sAVGVEcNtRE0y4mvaOAM=

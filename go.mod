@@ -8,7 +8,7 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/a-h/templ v0.3.1020
 	github.com/avast/retry-go/v4 v4.7.0
-	github.com/bmc-toolbox/bmclib/v2 v2.3.6-0.20260629072632-09ffa6d9fbe6
+	github.com/bmc-toolbox/bmclib/v2 v2.3.6-0.20260724022505-33fe4e06a8da
 	github.com/bmc-toolbox/common v0.0.1
 	github.com/bougou/go-ipmi v0.8.3
 	github.com/ccoveille/go-safecast/v2 v2.0.1

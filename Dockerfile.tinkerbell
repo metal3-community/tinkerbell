@@ -1,4 +1,4 @@
-FROM alpine:3.24 AS ca-certs
+FROM --platform=$BUILDPLATFORM alpine:latest AS ca-certs
 
 RUN apk --no-cache add ca-certificates
 

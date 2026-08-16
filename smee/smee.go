@@ -400,7 +400,7 @@ func (c *Config) PXEHTTPHandler(log logr.Logger) http.Handler {
 	if c.IPXE.HTTPScriptServer.Enabled {
 		// Same template fallback as the TFTP server, so pxe-over-http clients
 		// get generated configs when the Hardware CRD doesn't define one.
-		jh := c.scriptHandler(log.WithName("script"))
+		jh := c.newScriptHandler(log.WithName("script"))
 		routes = append(routes, binary.HandlerRoute{RouteName: "pxe-template", Handler: tftphandler.HandlerFunc(jh.HandleTFTP)})
 	}
 	routes = append(routes, binary.DiskAssetRoute{Log: log, Dir: c.TFTP.AssetDir})
@@ -414,13 +414,13 @@ func (c *Config) ScriptHandler(log logr.Logger) http.Handler {
 	if !c.IPXE.HTTPScriptServer.Enabled {
 		return nil
 	}
-	jh := c.scriptHandler(log)
+	jh := c.newScriptHandler(log)
 	return jh.HandlerFunc()
 }
 
-// scriptHandler builds the shared iPXE/pxelinux script handler used by both
+// newScriptHandler builds the shared iPXE/pxelinux script handler used by both
 // the HTTP script server and the TFTP template route.
-func (c *Config) scriptHandler(log logr.Logger) script.Handler {
+func (c *Config) newScriptHandler(log logr.Logger) script.Handler {
 	return script.Handler{
 		Logger:                log,
 		Backend:               c.Backend,
@@ -470,7 +470,7 @@ func (c *Config) TFTPHandler(log logr.Logger) tftphandler.Handler {
 		binary.RPiNetbootRoute{Log: log, Resolver: resolver, AssetDir: assetDir},
 	)
 	if c.IPXE.HTTPScriptServer.Enabled {
-		jh := c.scriptHandler(log.WithName("script"))
+		jh := c.newScriptHandler(log.WithName("script"))
 		routes = append(routes, binary.HandlerRoute{RouteName: "pxe-template", Handler: tftphandler.HandlerFunc(jh.HandleTFTP)})
 	}
 	if h := c.OSIETFTPHandler(log.WithName("osie")); h != nil {

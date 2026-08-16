@@ -151,14 +151,16 @@ lint: _lint  ## Run linting
 LINTERS :=
 FIXERS :=
 
-GOLANGCI_LINT_CONFIG := .golangci.yml
+# Absolute path: the lint target uses `find -execdir`, so the config must resolve
+# from whichever module directory golangci-lint is invoked in.
+GOLANGCI_LINT_CONFIG := $(CURDIR)/.golangci.yml
 LINTERS += golangci-lint-lint
 golangci-lint-lint: $(GOLANGCI_LINT)
-	find $(PWD) -name go.mod -not -path "./out/*" -execdir sh -c '"$(GOLANGCI_LINT)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'
+	find $(PWD) -name go.mod -not -path "$(PWD)/out/*" -not -path "$(PWD)/bin/*" -execdir sh -c '"$(GOLANGCI_LINT)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'
 
 FIXERS += golangci-lint-fix
 golangci-lint-fix: $(GOLANGCI_LINT)
-	find $(PWD) -name go.mod -not -path "./out/*" -execdir "$(GOLANGCI_LINT)" run -c "$(GOLANGCI_LINT_CONFIG)" --fix \;
+	find $(PWD) -name go.mod -not -path "$(PWD)/out/*" -not -path "$(PWD)/bin/*" -execdir "$(GOLANGCI_LINT)" run -c "$(GOLANGCI_LINT_CONFIG)" --fix \;
 
 .PHONY: _lint $(LINTERS)
 _lint: $(LINTERS)

@@ -318,13 +318,15 @@ func file_get_action_response_proto_rawDescGZIP() []byte {
 	return file_get_action_response_proto_rawDescData
 }
 
-var file_get_action_response_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_get_action_response_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_get_action_response_proto_goTypes = []any{
-	(PreconditionFailureViolation)(0), // 0: proto.PreconditionFailureViolation
-	(*ActionResponse)(nil),            // 1: proto.ActionResponse
-	(*Namespaces)(nil),                // 2: proto.Namespaces
-}
+var (
+	file_get_action_response_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+	file_get_action_response_proto_msgTypes  = make([]protoimpl.MessageInfo, 2)
+	file_get_action_response_proto_goTypes   = []any{
+		(PreconditionFailureViolation)(0), // 0: proto.PreconditionFailureViolation
+		(*ActionResponse)(nil),            // 1: proto.ActionResponse
+		(*Namespaces)(nil),                // 2: proto.Namespaces
+	}
+)
 var file_get_action_response_proto_depIdxs = []int32{
 	2, // 0: proto.ActionResponse.namespaces:type_name -> proto.Namespaces
 	1, // [1:1] is the sub-list for method output_type

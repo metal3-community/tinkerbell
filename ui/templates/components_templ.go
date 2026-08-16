@@ -5,8 +5,10 @@ package templates
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
-import templruntime "github.com/a-h/templ/runtime"
+import (
+	"github.com/a-h/templ"
+	templruntime "github.com/a-h/templ/runtime"
+)
 
 // Reusable detail components - UI
 func DetailMainContent(resourceType, name, namespace, backLink string, content templ.Component) templ.Component {
@@ -1621,7 +1623,7 @@ func SchemaFieldList(fields []SchemaField, depth int) templ.Component {
 			templ_7745c5c3_Var62 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		var templ_7745c5c3_Var63 = []any{"space-y-1", templ.KV("pl-4 border-l border-gray-200 dark:border-darkBorder ml-2", depth > 0)}
+		templ_7745c5c3_Var63 := []any{"space-y-1", templ.KV("pl-4 border-l border-gray-200 dark:border-darkBorder ml-2", depth > 0)}
 		templ_7745c5c3_Err = templ.RenderCSSItems(ctx, templ_7745c5c3_Buffer, templ_7745c5c3_Var63...)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err

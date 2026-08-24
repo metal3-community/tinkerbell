@@ -101,8 +101,18 @@ deployment:
       # binary (no init container required). The binary creates a per-pod macvlan
       # interface (mv<13-hex-chars-of-pod-UID>) in the host netns and moves it into
       # the pod netns before starting the DHCP server.
-      # Requires hostPID=true and CAP_NET_ADMIN + CAP_SYS_ADMIN (added automatically
-      # when this is true).
+      #
+      # The interface is brought up as a layer 2 receiver only: no IP address and no
+      # routes, so the pod's routing table stays exactly as the CNI left it and all
+      # routed traffic continues to flow through the CNI datapath (Cilium's eBPF
+      # programs on eth0, for example). The DHCP server reaches it via
+      # SO_BINDTODEVICE, which is all the kernel needs to receive limited broadcasts
+      # on an unaddressed interface and to send replies back out of it.
+      #
+      # Requires hostPID=true, privileged=true, and CAP_NET_ADMIN + CAP_SYS_ADMIN
+      # (all added automatically when this is true). privileged is needed because the
+      # binary writes per-interface settings under /proc/sys, which container runtimes
+      # mount read-only otherwise.
       macvlanEnabled: false
       # macvlanSourceInterface is the host parent interface for the macvlan.
       # Leave empty to auto-detect from the host's default route.

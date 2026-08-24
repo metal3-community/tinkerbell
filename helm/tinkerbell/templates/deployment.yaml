@@ -173,7 +173,10 @@ spec:
                 - NET_RAW
                 {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
                 # NET_ADMIN + SYS_ADMIN are required for native macvlan setup:
-                # netlink link/addr operations and setns to enter the host netns.
+                # netlink link operations and setns to enter the host netns.
+                # privileged (above) is additionally required because the macvlan is
+                # hardened by writing per-interface settings under /proc/sys, which
+                # container runtimes mount read-only for unprivileged containers.
                 - NET_ADMIN
                 - SYS_ADMIN
                 {{- end }}

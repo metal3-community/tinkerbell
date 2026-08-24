@@ -298,7 +298,7 @@ var DHCPBindInterface = Config{
 
 var DHCPMacvlanEnabled = Config{
 	Name:  "dhcp-macvlan-enabled",
-	Usage: "[dhcp] create a per-pod macvlan interface at startup and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN, and hostPID=true",
+	Usage: "[dhcp] create a per-pod layer 2 only macvlan interface at startup (no IP, no routes) and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN, hostPID=true, and a writable /proc/sys (privileged) to harden the interface",
 }
 
 var DHCPMacvlanSourceInterface = Config{

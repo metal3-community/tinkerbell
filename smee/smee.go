@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"path"
 	"reflect"
 	"strings"
@@ -35,10 +36,29 @@ import (
 	"github.com/tinkerbell/tinkerbell/smee/internal/osie"
 	"github.com/tinkerbell/tinkerbell/smee/internal/syslog"
 	"golang.org/x/sync/errgroup"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/rest"
-	controllerruntime "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+)
+
+const (
+	// dhcpLeaderElectionID is the name of the Lease used to elect the single
+	// Smee instance that serves DHCP.
+	dhcpLeaderElectionID = "smee-dhcp.tinkerbell.org"
+
+	// DHCP leader election timings. These match client-go's defaults, but are
+	// stated explicitly because DHCP correctness depends on the relationship
+	// between them: a challenger waits dhcpLeaseDuration past the last renewal
+	// it observed before taking over, while this instance stops serving at
+	// dhcpRenewDeadline, so the two never answer at the same time.
+	dhcpLeaseDuration = 15 * time.Second
+	dhcpRenewDeadline = 10 * time.Second
+	dhcpRetryPeriod   = 2 * time.Second
+
+	// serviceAccountNamespaceFile is where a pod's own namespace is projected.
+	// Used when no leader election namespace is configured.
+	serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
 // MetricsRegistry returns the Prometheus registry that contains all Smee metrics.
@@ -651,41 +671,160 @@ func (c *Config) serveDHCP(ctx context.Context, log logr.Logger, dh server.Handl
 	return ds.Serve(ctx)
 }
 
-// serveDHCPWithLeaderElection serves DHCP only while this instance holds
-// Kubernetes lease-based leadership. It mirrors the controller-runtime manager
-// based leader election used by the Rufio and Tink controllers: the DHCP server
-// is registered as a leader-election runnable that starts when leadership is
-// acquired and stops when it is lost. Losing leadership returns from Start,
-// allowing a standby instance to take over. This is compatible with per-pod IPs
-// assigned by CNIs such as Multus macvlan, requiring no host network interface
-// manipulation.
+// serveDHCPWithLeaderElection serves DHCP only while this instance holds the
+// Kubernetes Lease named dhcpLeaderElectionID, campaigning for it in a loop.
+//
+// Losing the Lease stops the DHCP server and closes its socket, after which
+// this instance returns to standby and waits to acquire it again. Losing the
+// Lease is deliberately not an error: DHCP is the only leader-elected service
+// in this binary, so treating it as fatal would take HTTP, TFTP, the Tink
+// server and the controllers down with it, and a Lease that flaps would put the
+// whole process into CrashLoopBackOff. This returns only when ctx is cancelled
+// or the DHCP server itself fails.
+//
+// This is compatible with per-pod IPs assigned by CNIs such as Multus macvlan,
+// requiring no host network interface manipulation.
 func (c *Config) serveDHCPWithLeaderElection(ctx context.Context, log logr.Logger, dh server.Handler, addrPort netip.AddrPort) error {
-	mgr, err := controllerruntime.NewManager(c.Client, controllerruntime.Options{
-		Logger:                        log,
-		LeaderElection:                true,
-		LeaderElectionID:              "smee-dhcp.tinkerbell.org",
-		LeaderElectionNamespace:       c.LeaderElectionNamespace,
-		LeaderElectionReleaseOnCancel: true,
-		Metrics:                       metricsserver.Options{BindAddress: "0"},
-		HealthProbeBindAddress:        "0",
+	namespace := c.LeaderElectionNamespace
+	if namespace == "" {
+		ns, err := os.ReadFile(serviceAccountNamespaceFile)
+		if err != nil {
+			return fmt.Errorf("determining dhcp leader election namespace: %w", err)
+		}
+		namespace = strings.TrimSpace(string(ns))
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("determining dhcp leader election identity: %w", err)
+	}
+	// The UUID distinguishes this process from an earlier one on the same pod
+	// that may not have fully exited yet.
+	identity := hostname + "_" + string(uuid.NewUUID())
+
+	// The renew deadline caps the client timeout, so one hung API request cannot
+	// by itself cost this instance the Lease.
+	lock, err := resourcelock.NewFromKubeconfig(
+		resourcelock.LeasesResourceLock,
+		namespace,
+		dhcpLeaderElectionID,
+		resourcelock.ResourceLockConfig{Identity: identity},
+		c.Client,
+		dhcpRenewDeadline,
+	)
+	if err != nil {
+		return fmt.Errorf("creating dhcp leader election lock: %w", err)
+	}
+
+	log.Info("waiting to acquire dhcp leadership",
+		"lease", dhcpLeaderElectionID, "namespace", namespace, "identity", identity)
+
+	for ctx.Err() == nil {
+		if err := c.leadDHCP(ctx, log, dh, addrPort, lock); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// leadDHCP runs one leadership cycle: campaign for the Lease, serve DHCP while
+// it is held, and return once it is lost or ctx is cancelled. It returns an
+// error only if the DHCP server itself failed.
+func (c *Config) leadDHCP(ctx context.Context, log logr.Logger, dh server.Handler, addrPort netip.AddrPort, lock resourcelock.Interface) error {
+	// Cancelling runCtx ends the campaign, so a DHCP failure unrelated to
+	// leadership (failing to bind, say) stops rather than being retried forever.
+	runCtx, endCampaign := context.WithCancel(ctx)
+	defer endCampaign()
+
+	var (
+		led    = make(chan struct{})
+		served = make(chan error, 1)
+		le     *leaderelection.LeaderElector
+		err    error
+	)
+
+	le, err = leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+		Lock:            lock,
+		LeaseDuration:   dhcpLeaseDuration,
+		RenewDeadline:   dhcpRenewDeadline,
+		RetryPeriod:     dhcpRetryPeriod,
+		ReleaseOnCancel: true,
+		Name:            dhcpLeaderElectionID,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(leaderCtx context.Context) {
+				close(led)
+				log.Info("acquired dhcp leadership, starting dhcp server", "bindAddr", addrPort)
+
+				serveCtx, stopServing := context.WithCancel(leaderCtx)
+				defer stopServing()
+				go watchDHCPLease(serveCtx, log, le, stopServing)
+
+				if err := c.serveDHCP(serveCtx, log, dh, addrPort); err != nil && !errors.Is(err, context.Canceled) {
+					endCampaign()
+					served <- fmt.Errorf("dhcp server failed: %w", err)
+
+					return
+				}
+				served <- nil
+			},
+			OnStoppedLeading: func() {
+				// Also called when the campaign ends without ever leading.
+				select {
+				case <-led:
+					log.Info("lost dhcp leadership, stopped serving dhcp, standing by")
+				default:
+				}
+			},
+		},
 	})
 	if err != nil {
-		return fmt.Errorf("creating manager for DHCP leader election: %w", err)
+		return fmt.Errorf("creating dhcp leader elector: %w", err)
 	}
 
-	// A plain RunnableFunc is leader-election gated by controller-runtime, so the
-	// DHCP server only runs on the elected leader.
-	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		log.Info("acquired DHCP leadership, starting dhcp server", "bindAddr", addrPort)
-		if err := c.serveDHCP(ctx, log, dh, addrPort); err != nil && !errors.Is(err, context.Canceled) {
-			return fmt.Errorf("dhcp server failed: %w", err)
-		}
+	le.Run(runCtx)
+
+	// Run returns as soon as leadership ends, without waiting for
+	// OnStartedLeading to unwind. Wait for serveDHCP to return, and so for its
+	// socket to be closed, before campaigning again: the DHCP listener sets
+	// SO_REUSEPORT, so a second bind would otherwise quietly succeed alongside
+	// the first and this instance would answer twice.
+	select {
+	case <-led:
+		return <-served
+	default:
 		return nil
-	})); err != nil {
-		return fmt.Errorf("adding dhcp server to manager: %w", err)
 	}
+}
 
-	return mgr.Start(ctx)
+// watchDHCPLease stops the DHCP server as soon as the Lease can no longer be
+// proven held, instead of waiting for client-go to unwind.
+//
+// client-go cancels the leader context only after its renew loop has given up
+// and its release call has returned. That release is a blocking API call, so
+// when the API server is unreachable — the very case in which the Lease is
+// being lost — it runs until the client timeout. The delay can carry this
+// instance past the point where a challenger takes over, leaving two instances
+// answering DHCP at once. Check reports an error once the last successful
+// renewal is older than LeaseDuration plus the given tolerance, so a negative
+// tolerance brings that forward to the renew deadline.
+func watchDHCPLease(ctx context.Context, log logr.Logger, le *leaderelection.LeaderElector, stopServing func()) {
+	ticker := time.NewTicker(dhcpRetryPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := le.Check(dhcpRenewDeadline - dhcpLeaseDuration); err != nil {
+				log.Info("dhcp lease is no longer renewable, stopping dhcp server", "err", err)
+				stopServing()
+
+				return
+			}
+		}
+	}
 }
 
 func (c *Config) dhcpHandler(log logr.Logger) (server.Handler, error) {

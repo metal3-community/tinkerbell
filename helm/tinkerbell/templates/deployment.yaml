@@ -162,7 +162,9 @@ spec:
             successThreshold: {{ .Values.deployment.probes.startup.successThreshold }}
           {{- end }}
           securityContext:
-            {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
+            {{- if and .Values.deployment.envs.dhcp.macvlanEnabled .Values.deployment.envs.dhcp.macvlanPrivileged }}
+            # Only needed to disable IPv6 on the macvlan, which has no netlink
+            # equivalent and so needs a writable /proc/sys. See dhcp.macvlanPrivileged.
             privileged: true
             {{- end }}
             capabilities:
@@ -172,11 +174,8 @@ spec:
                 # so no host network interface management privileges are needed.
                 - NET_RAW
                 {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
-                # NET_ADMIN + SYS_ADMIN are required for native macvlan setup:
-                # netlink link operations and setns to enter the host netns.
-                # privileged (above) is additionally required because the macvlan is
-                # hardened by writing per-interface settings under /proc/sys, which
-                # container runtimes mount read-only for unprivileged containers.
+                # NET_ADMIN + SYS_ADMIN are required for native macvlan setup: netlink
+                # link and devconf operations, and setns to enter the host netns.
                 - NET_ADMIN
                 - SYS_ADMIN
                 {{- end }}

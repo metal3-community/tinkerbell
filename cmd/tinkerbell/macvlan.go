@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net"
 	"os"
 	"regexp"
@@ -48,11 +49,11 @@ func macvlanIfaceName() (string, error) {
 
 // setupMacvlan creates a macvlan interface (bridge mode) in the host network
 // namespace, moves it into the calling process's network namespace, and brings
-// it up as a layer 2 receiver only: no IP address, no routes, and with the
-// per-interface sysctls in macvlanSysctls applied so it cannot participate in
-// the pod's routing. Smee's DHCP server reaches it via SO_BINDTODEVICE, which
-// is all the kernel needs to deliver inbound limited broadcasts and to send
-// replies back out of an unaddressed interface.
+// it up as a layer 2 receiver only: no IP address, no routes, and hardened by
+// hardenMacvlan so it cannot participate in the pod's routing. Smee's DHCP
+// server reaches it via SO_BINDTODEVICE, which is all the kernel needs to
+// deliver inbound limited broadcasts and to send replies back out of an
+// unaddressed interface.
 //
 // It first purges any stale mv* interfaces found in the host netns (orphans
 // from pods that exited without cleanup). The returned cleanup func deletes
@@ -169,7 +170,7 @@ func setupMacvlan(log logr.Logger, sourceIface, ifaceName string) (cleanup func(
 
 	// Harden before the link comes up, so no LAN traffic is ever processed with
 	// the permissive defaults in place.
-	if err := hardenMacvlan(log, ifaceName); err != nil {
+	if err := hardenMacvlan(log, podLink, ifaceName); err != nil {
 		return nil, err
 	}
 
@@ -189,63 +190,158 @@ func setupMacvlan(log logr.Logger, sourceIface, ifaceName string) (cleanup func(
 	return func() { teardownMacvlan(log, ifaceName) }, nil
 }
 
-// macvlanSysctls are the per-interface settings applied inside the pod netns
-// before the macvlan is brought up. The format verb is the interface name.
-//
 // A bridge-mode macvlan floods every broadcast and multicast frame from the
-// physical segment into the pod's network namespace, and at their defaults
-// these settings let that traffic reconfigure the pod. accept_ra and autoconf
-// allow a router advertisement from the LAN to install an IPv6 default route
-// that bypasses the CNI datapath entirely, and arp_ignore=0 makes the namespace
-// answer ARP on the LAN for every address it holds — including the CNI-assigned
-// address on eth0, which puts the pod's IP on the wrong segment. The interface
-// only ever needs to receive DHCP broadcasts, so every other form of network
-// participation is switched off.
+// physical segment into the pod's network namespace, and at their defaults the
+// kernel's per-interface settings let that traffic reconfigure the pod. The
+// interface only ever needs to receive DHCP broadcasts, so hardenMacvlan
+// switches off every other form of network participation.
+//
+// The IPv4 half is applied over netlink (see macvlanDevconf), the IPv6 half by
+// writing /proc/sys (see macvlanIPv6Sysctls), because the kernel exposes no
+// netlink attribute for those.
+
+// IPv4 devconf indexes from include/uapi/linux/ip.h. These are the values the
+// kernel expects as attribute types inside IFLA_INET_CONF, and are stable
+// kernel ABI.
+const (
+	devconfAcceptRedirects = 4
+	devconfSendRedirects   = 6
+	devconfArpAnnounce     = 18
+	devconfArpIgnore       = 19
+
+	// iflaInetConf is IFLA_INET_CONF from include/uapi/linux/if_link.h.
+	iflaInetConf = 1
+)
+
+// macvlanDevconf are the per-interface IPv4 settings applied to the macvlan.
+//
+// arp_ignore=8 stops the namespace answering ARP on the physical segment for
+// addresses it holds on other interfaces, which would otherwise include the
+// CNI-assigned address on eth0 and so put the pod's IP on the wrong segment.
+// arp_announce=2 keeps any ARP the interface does send from advertising an
+// address that is not valid there. The redirect settings stop hosts on the
+// segment steering the pod's traffic.
 //
 // The two ARP settings are the load-bearing ones and are guaranteed to take
 // effect: the kernel resolves them as max(conf.all, conf.<if>) (IN_DEV_MAXCONF
 // in include/linux/inetdevice.h), so a per-interface value always wins. The
 // redirect settings are best effort by comparison — with forwarding disabled
 // the kernel ORs them with conf.all, so a conf.all of 1 overrides them.
-var macvlanSysctls = []struct {
+var macvlanDevconf = map[int]uint32{
+	devconfArpIgnore:       8,
+	devconfArpAnnounce:     2,
+	devconfAcceptRedirects: 0,
+	devconfSendRedirects:   0,
+}
+
+// macvlanIPv6Sysctls are the per-interface IPv6 settings applied to the
+// macvlan. The format verb is the interface name.
+//
+// Left at their defaults, a router advertisement from the physical segment
+// installs an IPv6 default route in the pod that bypasses the CNI datapath
+// entirely, and SLAAC configures a global address on the macvlan. Disabling
+// IPv6 address generation alone does not prevent either: the interface still
+// joins the all-nodes multicast group and still acts on advertisements.
+//
+// Unlike the IPv4 settings these have no netlink equivalent — inet6_set_link_af
+// accepts only IFLA_INET6_TOKEN and IFLA_INET6_ADDR_GEN_MODE — so they need a
+// writable /proc/sys, which container runtimes provide only to privileged
+// containers.
+var macvlanIPv6Sysctls = []struct {
 	path  string
 	value string
 }{
 	{"net/ipv6/conf/%s/disable_ipv6", "1"},
 	{"net/ipv6/conf/%s/accept_ra", "0"},
 	{"net/ipv6/conf/%s/autoconf", "0"},
-	{"net/ipv4/conf/%s/arp_ignore", "8"},
-	{"net/ipv4/conf/%s/arp_announce", "2"},
-	{"net/ipv4/conf/%s/accept_redirects", "0"},
-	{"net/ipv4/conf/%s/send_redirects", "0"},
 }
 
-// hardenMacvlan applies macvlanSysctls to ifaceName in the current (pod)
-// network namespace.
+// setIPv4Devconf applies per-interface IPv4 settings over netlink, as
+// RTM_SETLINK carrying IFLA_AF_SPEC -> AF_INET -> IFLA_INET_CONF.
 //
-// A knob the running kernel does not provide is skipped, but any other failure
-// is fatal: a macvlan that is up without these settings is precisely the
-// configuration that disrupts the CNI datapath, so failing to start is better
-// than silently attaching an unrestrained interface to the pod.
-func hardenMacvlan(log logr.Logger, ifaceName string) error {
-	if !macvlanNameRe.MatchString(ifaceName) {
-		return fmt.Errorf("refusing to apply sysctls to unexpected interface name %q", ifaceName)
+// This is the same configuration /proc/sys/net/ipv4/conf/<if>/ exposes, but it
+// needs only CAP_NET_ADMIN and works when /proc/sys is mounted read-only, which
+// is how container runtimes mount it for unprivileged containers.
+func setIPv4Devconf(link netlink.Link, values map[int]uint32) error {
+	// ifinfomsg carries the index as a signed 32 bit field.
+	index := link.Attrs().Index
+	if index <= 0 || index > math.MaxInt32 {
+		return fmt.Errorf("interface %q has out of range index %d", link.Attrs().Name, index)
 	}
-	for _, s := range macvlanSysctls {
+
+	req := nl.NewNetlinkRequest(unix.RTM_SETLINK, unix.NLM_F_ACK)
+
+	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
+	msg.Index = int32(index)
+	req.AddData(msg)
+
+	// NLA_F_NESTED is required on each level; without it the kernel rejects the
+	// message with EINVAL.
+	spec := nl.NewRtAttr(unix.IFLA_AF_SPEC|unix.NLA_F_NESTED, nil)
+	inet := spec.AddRtAttr(unix.AF_INET|unix.NLA_F_NESTED, nil)
+	conf := inet.AddRtAttr(iflaInetConf|unix.NLA_F_NESTED, nil)
+	for cfg, value := range values {
+		conf.AddRtAttr(cfg, nl.Uint32Attr(value))
+	}
+	req.AddData(spec)
+
+	if _, err := req.Execute(unix.NETLINK_ROUTE, 0); err != nil {
+		return fmt.Errorf("set IPv4 devconf on %q: %w", link.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+// hardenMacvlan applies macvlanDevconf and macvlanIPv6Sysctls to the macvlan in
+// the current (pod) network namespace.
+//
+// Failing to apply the IPv4 settings is fatal, since they need nothing beyond
+// the CAP_NET_ADMIN the interface was created with. The IPv6 settings are best
+// effort: they need a writable /proc/sys, and when the container is not
+// privileged the interface is still far more restrained than an unhardened one,
+// so this warns rather than refusing to start.
+func hardenMacvlan(log logr.Logger, link netlink.Link, ifaceName string) error {
+	if !macvlanNameRe.MatchString(ifaceName) {
+		return fmt.Errorf("refusing to harden unexpected interface name %q", ifaceName)
+	}
+
+	if err := setIPv4Devconf(link, macvlanDevconf); err != nil {
+		return err
+	}
+
+	for _, s := range macvlanIPv6Sysctls {
 		path := "/proc/sys/" + fmt.Sprintf(s.path, ifaceName)
 		err := os.WriteFile(path, []byte(s.value+"\n"), 0o600)
 		switch {
 		case err == nil:
 		case errors.Is(err, fs.ErrNotExist):
-			log.Info("skipping sysctl not present on this kernel", "path", path)
+			// The kernel does not provide this knob, so there is nothing to
+			// switch off.
+			log.V(1).Info("skipping sysctl not present on this kernel", "path", path)
+		case sysctlAlreadySet(path, s.value):
+			log.V(1).Info("sysctl already at the required value", "path", path, "value", s.value)
 		default:
-			return fmt.Errorf(
-				"set %s=%s: %w (writing /proc/sys requires a writable procfs and CAP_NET_ADMIN; "+
-					"without it the macvlan would accept router advertisements and answer ARP on the physical network)",
-				path, s.value, err)
+			log.Info("WARNING: could not harden macvlan against IPv6 router advertisements; "+
+				"a router advertisement on the physical network can install an IPv6 default route in this pod "+
+				"that bypasses the CNI datapath, and SLAAC can configure a global address on the interface. "+
+				"Writing /proc/sys requires a privileged container; set dhcp.macvlanPrivileged to restore it.",
+				"path", path, "value", s.value, "err", err)
 		}
 	}
+
 	return nil
+}
+
+// sysctlAlreadySet reports whether path already holds value, so an unwritable
+// /proc/sys is only worth warning about when it would actually have changed
+// something.
+func sysctlAlreadySet(path, value string) bool {
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSpace(string(current)) == value
 }
 
 // purgePodMacvlan removes an interface named ifaceName from the current (pod)

@@ -298,7 +298,7 @@ var DHCPBindInterface = Config{
 
 var DHCPMacvlanEnabled = Config{
 	Name:  "dhcp-macvlan-enabled",
-	Usage: "[dhcp] create a per-pod layer 2 only macvlan interface at startup (no IP, no routes) and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN, hostPID=true, and a writable /proc/sys (privileged) to harden the interface",
+	Usage: "[dhcp] create a per-pod layer 2 only macvlan interface at startup (no IP, no routes) and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN and hostPID=true. Disabling IPv6 on the interface additionally needs a writable /proc/sys (a privileged container); without it a router advertisement on the physical network can add an IPv6 default route to the pod",
 }
 
 var DHCPMacvlanSourceInterface = Config{

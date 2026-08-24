@@ -4,77 +4,40 @@
 SHELL := bash
 .SHELLFLAGS := -o pipefail -euc
 
-# Detect if running on macOS and if Homebrew is installed; check for GNU Make and GNU coreutils/findutils/sed/tar
-ifeq ($(shell uname), Darwin)
-  MAKE_VERSION := $(shell $(MAKE) -v | awk '/GNU Make/ {print $$3}')
-  ifeq ($(shell expr $(MAKE_VERSION) \< 4), 1)
-    $(error "GNU Make 4.x is required (Current version: $(MAKE_VERSION)) Install it via Homebrew with 'brew install make' and use 'gmake' instead of 'make'.")
-  endif
-  ifneq ($(shell command -v brew 2>/dev/null), "")
-    HOMEBREW_PREFIX := $(shell brew --prefix)
-    PATH := $(HOMEBREW_PREFIX)/opt/coreutils/libexec/gnubin:$(HOMEBREW_PREFIX)/opt/gnu-sed/libexec/gnubin:$(HOMEBREW_PREFIX)/opt/gnu-tar/libexec/gnubin:$(HOMEBREW_PREFIX)/opt/findutils/libexec/gnubin:$(PATH)
-  endif
-endif
-
-GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || true)
-ifeq ($(GIT_TAG),)
-	GIT_TAG := v0.0.0
-endif
 VERSION ?=
 ifeq ($(VERSION),)
 	VERSION := $(shell go run --buildvcs=true ./script/version/)
 endif
 CGO_ENABLED := 0
 export CGO_ENABLED
-COMPRESS := false
-UPX_BASEDIR := $(PWD)/build
-LOCAL_ARCH := $(shell uname -m)
-LOCAL_ARCH_ALT :=
-ifeq ($(LOCAL_ARCH),x86_64)
-	LOCAL_ARCH_ALT := amd64
-else ifeq ($(LOCAL_ARCH),aarch64)
-	LOCAL_ARCH_ALT := arm64
-endif
-HELM_REPO_NAME ?= ghcr.io/tinkerbell/charts
+
+GITHUB_REPOSITORY_OWNER ?= $(shell git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/[^/]+\.git.*|\1|;s|.*[:/]([^/]+)/[^/]+$$|\1|')
+HELM_REPO_NAME ?= ghcr.io/${GITHUB_REPOSITORY_OWNER}/charts
 
 ########### Tools variables ###########
 # Tool versions
-GOIMPORT_VER           := latest
-CONTROLLER_GEN_VERSION := v0.21.0
-BUF_VERSION            := v1.56.0
-PROTOC_GEN_GO_GRPC_VER := v1.5.1  # must be in sync with the version in buf.gen.yaml
-PROTOC_GEN_GO_VER      := v1.36.7 # must be in sync with the version in buf.gen.yaml
-UPX_VER 			   := 4.2.4
-GODEPGRAPH_VER 	       := v0.0.0-20240411160502-0f324ca7e282
 GOLANGCI_LINT_VERSION  := v2.12.2
-GO_LICENSES_VER        := v2.0.1
 
+GORELEASER_VER := v2.12.2
+GORELEASER_BIN := goreleaser
 
-# Tool fully qualified paths (FQP)
-TOOLS_DIR := $(PWD)/out/tools
-GOIMPORTS_FQP := $(TOOLS_DIR)/goimports-$(GOIMPORT_VER)
-CONTROLLER_GEN_FQP := $(TOOLS_DIR)/controller-gen-$(CONTROLLER_GEN_VERSION)
-BUF_FQP := $(TOOLS_DIR)/buf-$(BUF_VERSION)
-PROTOC_GEN_GO_GRPC_FQP := $(TOOLS_DIR)/protoc-gen-go-grpc-$(PROTOC_GEN_GO_GRPC_VER)
-PROTOC_GEN_GO_FQP := $(TOOLS_DIR)/protoc-gen-go-$(PROTOC_GEN_GO_VER)
-UPX_FQP := $(TOOLS_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH)
-GODEPGRAPH_FQP := $(TOOLS_DIR)/godepgraph-$(GODEPGRAPH_VER)
-GO_LICENSES_FQP := $(TOOLS_DIR)/go-licenses-$(GO_LICENSES_VER)
+# Directories.
+TOOLS_BIN_DIR := $(abspath bin)
+
+# Tool binaries with versions
+GODEPGRAPH := go tool godepgraph
+GORELEASER := $(TOOLS_BIN_DIR)/$(GORELEASER_BIN)-$(GORELEASER_VER)
+GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 #######################################
-######### Container images variable #########
-# `?=` will only set the variable if it is not already set by the environment
-IMAGE_NAME       ?= tinkerbell/tinkerbell:latest
-IMAGE_NAME_AGENT ?= tinkerbell/tink-agent:latest
-DOCKER_CACHE_FROM ?=
-#############################################
 
 all: help
 
 help: ## Print this help
 	@grep --no-filename -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sed 's/:.*##/·/' | sort | column -ts '·' -c 120
 
-build: out/tinkerbell ## Build the Tinkerbell binary
-build-agent: out/tink-agent ## Build the Tink Agent binary
+.PHONY: build
+build: generate $(GORELEASER) ## Build the Tinkerbell and Tink Agent binaries
+	$(GORELEASER) build --clean --auto-snapshot
 
 TEST_PKG ?=
 TEST_PKGS :=
@@ -88,171 +51,39 @@ endif
 test: ## Run go test
 	CGO_ENABLED=1 go test -race -coverprofile=coverage.txt -covermode=atomic -v ${TEST_ARGS} ${TEST_PKGS}
 
-.PHONY: test-api
-test-api: ## Run go test for API
-	(cd api; CGO_ENABLED=1 go test -race -coverprofile=coverage-api.txt -covermode=atomic -v ${TEST_ARGS} ${TEST_PKGS})
-
 .PHONY: vet
 vet: ## Run go vet
 	go vet ./...
 
 .PHONY: fmt
-fmt: $(GOIMPORTS_FQP) ## Run go fmt
-	go fmt ./...
-	$(GOIMPORTS_FQP) -w .
+fmt: $(GOLANGCI_LINT) ## Run go fmt
+	$(GOLANGCI_LINT) fmt ./...
 
 FILE_TO_NOT_INCLUDE_IN_COVERAGE := script/version/main.go|*.pb.go|zz_generated.deepcopy.go|facility_string.go|severity_string.go|*_templ.go
 
 .PHONY: coverage
 coverage: test ## Show test coverage
-	## Filter out generated files
+## Filter out generated files
 	cat coverage.txt | grep -v -E '$(FILE_TO_NOT_INCLUDE_IN_COVERAGE)' > coverage.out
 	go tool cover -func=coverage.out
 	mv coverage.out coverage.txt
 
-.PHONY: coverage-api
-coverage-api: test-api ## Show API test coverage
-	## Filter out generated files
-	cat api/coverage-api.txt | grep -v -E '$(FILE_TO_NOT_INCLUDE_IN_COVERAGE)' > api/coverage-api.out
-	go tool cover -func=api/coverage-api.out
-
-.PHONY: ci-checks
-ci-checks: $(GOIMPORTS_FQP) ./script/ci-checks.sh ## Run the ci-checks.sh script
-	GOIMPORTS=$(GOIMPORTS_FQP) ./script/ci-checks.sh
-
 .PHONY: ci
-ci: ci-checks coverage lint vet ## Runs all the same validations and tests that run in CI
+ci: coverage lint vet ## Runs all the same validations and tests that run in CI
 
-# Include UI Makefile
-include ui/Makefile
+.PHONY: generate
+generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	go generate ./...
+	$(MAKE) format
 
-# Run go generate
-generated_go_files := \
-		smee/internal/syslog/facility_string.go \
-		smee/internal/syslog/severity_string.go \
-
-generate-go: out/.generate-go.stamp ## Run Go's generate command
-$(generated_go_files): out/.generate-go.stamp
-out/.generate-go.stamp: $(GOIMPORTS_FQP) smee/internal/syslog/message.go
-	go generate -run=".*_string.go" ./...
-	$(GOIMPORTS_FQP) -w .
-	@touch $@
-
-TINKERBELL_SOURCES := $(shell find $(go list -deps ./cmd/tinkerbell | grep -i tinkerbell | cut -d"/" -f 4-) -type f -name '*.go')
-
-crossbinaries := out/tinkerbell-linux-amd64 out/tinkerbell-linux-arm64
-out/tinkerbell-linux-amd64: FLAGS=GOARCH=amd64
-out/tinkerbell-linux-arm64: FLAGS=GOARCH=arm64
-out/tinkerbell-linux-amd64 out/tinkerbell-linux-arm64: $(generated_go_files) $(TINKERBELL_SOURCES)
-	${FLAGS} CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -tags "${GO_TAGS}" -v -o $@ ./cmd/tinkerbell
-	if [ "${COMPRESS}" = "true" ]; then $(MAKE) $(UPX_FQP) && $(UPX_FQP) --best --lzma $@; fi
-
-TINKERBELL_SOURCES := $(shell find $(go list -deps ./cmd/tinkerbell | grep -i tinkerbell | cut -d"/" -f 4-) -type f -name '*.go')
-
-out/tinkerbell: $(generated_go_files) $(TINKERBELL_SOURCES) ## Compile Tinkerbell for the current architecture
-	${FLAGS} CGO_ENABLED=0 go build -ldflags="-s -w" -tags "${GO_TAGS}" -v -o $@ ./cmd/tinkerbell
-	if [ "${COMPRESS}" = "true" ]; then $(MAKE) $(UPX_FQP) && $(UPX_FQP) --best --lzma $@; fi
-
-cross-compile: $(crossbinaries) ## Compile for all architectures
-
-embeddedbinaries := out/tinkerbell-embedded-linux-amd64 out/tinkerbell-embedded-linux-arm64
-out/tinkerbell-embedded-linux-amd64: FLAGS=GOARCH=amd64
-out/tinkerbell-embedded-linux-arm64: FLAGS=GOARCH=arm64
-out/tinkerbell-embedded-linux-amd64 out/tinkerbell-embedded-linux-arm64: $(generated_go_files) $(TINKERBELL_SOURCES)
-	${FLAGS} CGO_ENABLED=0 GOOS=linux go build -tags "embedded" -ldflags="-s -w" -v -o $@ ./cmd/tinkerbell
-	if [ "${COMPRESS}" = "true" ]; then $(MAKE) $(UPX_FQP) && $(UPX_FQP) --best --lzma $@; fi
-
-cross-compile-embedded: $(embeddedbinaries) ## Compile Tinkerbell for all architectures with embedded tags
-cross-compile-embedded-amd64: out/tinkerbell-embedded-linux-amd64 ## Compile embedded Tinkerbell for amd64
-cross-compile-embedded-arm64: out/tinkerbell-embedded-linux-arm64 ## Compile embedded Tinkerbell for arm64
-
-checksums-embedded: out/checksums-embedded.txt ## Generate checksums for the cross-compiled binaries
-out/checksums-embedded.txt: out/tinkerbell-embedded-linux-amd64 out/tinkerbell-embedded-linux-arm64
-	(cd out; sha256sum tinkerbell-embedded-linux-amd64 tinkerbell-embedded-linux-arm64 > checksums-embedded.txt)
-
-AGENT_SOURCES := $(shell find $(go list -deps ./cmd/agent | grep -i tinkerbell | cut -d"/" -f 4-) -type f -name '*.go')
-
-crossbinaries-agent := out/tink-agent-linux-amd64 out/tink-agent-linux-arm64
-out/tink-agent-linux-amd64: FLAGS=GOARCH=amd64
-out/tink-agent-linux-arm64: FLAGS=GOARCH=arm64
-out/tink-agent-linux-amd64 out/tink-agent-linux-arm64: $(AGENT_SOURCES)
-	${FLAGS} CGO_ENABLED=0 GOOS=linux go build -tags "${GO_TAGS}" -ldflags="-s -w" -v -o $@ ./cmd/agent
-	if [ "${COMPRESS}" = "true" ]; then $(MAKE) $(UPX_FQP) && $(UPX_FQP) --best --lzma $@; fi
-
-out/tink-agent: $(AGENT_SOURCES) ## Compile Tink Agent for the current architecture
-	${FLAGS} CGO_ENABLED=0 go build -ldflags="-s -w" -tags "${GO_TAGS}" -v -o $@ ./cmd/agent
-	if [ "${COMPRESS}" = "true" ]; then $(MAKE) $(UPX_FQP) && $(UPX_FQP) --best --lzma $@; fi
-
-cross-compile-agent: $(crossbinaries-agent) ## Compile Tink Agent for all architectures
-
-PROTO_SOURCES := $(shell find pkg/proto -name '*.proto')
-
-generate-proto: out/.generate-proto.stamp ## Generate code from proto files.
-out/.generate-proto.stamp: $(BUF_FQP) $(PROTOC_GEN_GO_GRPC_FQP) $(PROTOC_GEN_GO_FQP) $(PROTO_SOURCES) buf.gen.yaml buf.yaml
-	$(BUF_FQP) generate
-	$(MAKE) fmt
-	@touch $@
-
-# Kubernetes CRD generation
-V1ALPHA1_API_SOURCES := $(shell find api/v1alpha1 -name '*.go' -not -name 'zz_generated*')
-V1ALPHA2_API_SOURCES := $(shell find api/v1alpha2 -name '*.go' -not -name 'zz_generated*')
-
-# The generated CRD YAML files are the real targets (not a stamp) so that
-# deleting or editing any one of them under crd/bases/<version>/ re-triggers
-# generation. A grouped-target rule (&:, GNU Make 4.3+) tells Make that a single
-# controller-gen invocation produces all of them at once. These lists must stay
-# in sync with the +kubebuilder:resource paths in the api sources.
-V1ALPHA1_CRD_FILES := \
-		crd/bases/v1alpha1/bmc.tinkerbell.org_jobs.yaml \
-		crd/bases/v1alpha1/bmc.tinkerbell.org_machines.yaml \
-		crd/bases/v1alpha1/bmc.tinkerbell.org_tasks.yaml \
-		crd/bases/v1alpha1/tinkerbell.org_hardware.yaml \
-		crd/bases/v1alpha1/tinkerbell.org_templates.yaml \
-		crd/bases/v1alpha1/tinkerbell.org_workflowrulesets.yaml \
-		crd/bases/v1alpha1/tinkerbell.org_workflows.yaml \
-
-V1ALPHA2_CRD_FILES := \
-		crd/bases/v1alpha2/bmc.tinkerbell.org_jobs.yaml \
-		crd/bases/v1alpha2/tinkerbell.org_hardware.yaml \
-		crd/bases/v1alpha2/tinkerbell.org_policies.yaml \
-		crd/bases/v1alpha2/tinkerbell.org_tasks.yaml \
-		crd/bases/v1alpha2/tinkerbell.org_workflows.yaml \
-
-manifests-v1alpha1: $(V1ALPHA1_CRD_FILES) ## Generate v1alpha1 CRDs
-$(V1ALPHA1_CRD_FILES) &: $(CONTROLLER_GEN_FQP) $(V1ALPHA1_API_SOURCES)
-	(cd api/v1alpha1; $(CONTROLLER_GEN_FQP) crd webhook paths="./..." output:crd:artifacts:config=../../crd/bases/v1alpha1)
-
-manifests-v1alpha2: $(V1ALPHA2_CRD_FILES) ## Generate v1alpha2 CRDs
-$(V1ALPHA2_CRD_FILES) &: $(CONTROLLER_GEN_FQP) $(V1ALPHA2_API_SOURCES)
-	(cd api/v1alpha2; $(CONTROLLER_GEN_FQP) crd webhook paths="./..." output:crd:artifacts:config=../../crd/bases/v1alpha2)
-
-manifests: manifests-v1alpha1 manifests-v1alpha2 ## Generate all CRDs
-
-# The generated files are the real targets (not a stamp) so that deleting any
-# one of them re-triggers generation. A grouped-target rule (&:, GNU Make 4.3+)
-# tells Make a single controller-gen invocation produces all of them at once.
-DEEPCOPY_FILES := \
-		api/v1alpha1/tinkerbell/zz_generated.deepcopy.go \
-		api/v1alpha1/bmc/zz_generated.deepcopy.go \
-		api/v1alpha2/tinkerbell/zz_generated.deepcopy.go \
-		api/v1alpha2/tinkerbell/bmc/zz_generated.deepcopy.go \
-
-generate-deepcopy: $(DEEPCOPY_FILES) ## Generate DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-# controller-gen must run inside the nested api/ module: every +kubebuilder:object
-# type lives in the github.com/tinkerbell/tinkerbell/api module, which the root
-# module's ./... expansion excludes, so running from the repo root generates nothing.
-$(DEEPCOPY_FILES) &: $(CONTROLLER_GEN_FQP) $(V1ALPHA1_API_SOURCES) $(V1ALPHA2_API_SOURCES) api/boilerplate.go.txt
-	(cd api; $(CONTROLLER_GEN_FQP) object:headerFile="boilerplate.go.txt" paths="./...")
-	$(MAKE) fmt
-
-generate: out/.generate.stamp ## Run all code generation steps
-out/.generate.stamp: $(DEEPCOPY_FILES) out/.generate-proto.stamp out/.generate-go.stamp out/.ui-generate.stamp $(V1ALPHA1_CRD_FILES) $(V1ALPHA2_CRD_FILES)
-	@touch $@
+.PHONY: format
+format: $(GOLANGCI_LINT) ## Format the code using go fmt
+	$(GOLANGCI_LINT) fmt ./...
 
 .PHONY: dep-graph
-dep-graph: $(GODEPGRAPH_FQP) ## Generate a dependency graph
+dep-graph: ## Generate a dependency graph
 	rm -rf out/dep-graph.txt out/dep-graph.png
-	$(GODEPGRAPH_FQP) -s -novendor -onlyprefixes "github.com/tinkerbell/tinkerbell,./cmd/agent,./cmd/tinkerbell" ./cmd/agent ./cmd/tinkerbell > out/dep-graph.txt
+	go tool godepgraph -s -novendor -onlyprefixes "github.com/tinkerbell/tinkerbell,./cmd/agent,./cmd/tinkerbell" ./cmd/agent ./cmd/tinkerbell > out/dep-graph.txt
 	cat out/dep-graph.txt | dot -Txdot -o out/dep-graph.dot
 
 ######### Helm charts - start #########
@@ -267,172 +98,69 @@ helm-publish: out/helm/tinkerbell-$(VERSION).tgz ## Publish the Helm chart
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart
-	helm lint helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" --set "artifactsFileServer=http://2.2.2.2"
+	helm lint helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1"
 
 .PHONY: helm-template
 helm-template: ## Helm template for Tinkerbell
 	helm template test helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" --set "artifactsFileServer=http://2.2.2.2" 2>&1 >/dev/null
-	helm template test helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" --set "artifactsFileServer=http://2.2.2.2" --set "deployment.envs.globals.bindAddr=192.0.2.10" | grep -A1 "name: TINKERBELL_BIND_ADDRESS" | grep -F -q 'value: "192.0.2.10"'
+	helm template test helm/tinkerbell --set "trustedProxies={127.0.0.1/24}" --set "publicIP=1.1.1.1" --set "artifactsFileServer=http://2.2.2.2" --set "deployment.envs.globals.bindAddress=192.0.2.10" | grep -F -q 'TINKERBELL_BIND_ADDRESS: "192.0.2.10"'
 
 ######### Helm charts - end   #########
 
 ######### Build container images - start #########
-.PHONY: prepare-buildx
-prepare-buildx: ## Prepare the buildx environment.
-## the "|| true" is to avoid failing if the builder already exists.
-	docker buildx create --name tinkerbell-multiarch --use --driver docker-container || true
+.PHONY: build-image
+build-image: $(GORELEASER) ## Build the container images
+	$(GORELEASER) release --clean --skip=validate --skip=sign --auto-snapshot --verbose
 
-.PHONY: image
-image: cross-compile third-party-licenses ## Build the Tinkerbell container image
-	docker build $(if $(DOCKER_CACHE_FROM),--cache-from $(DOCKER_CACHE_FROM)) -t $(IMAGE_NAME) -f Dockerfile.tinkerbell .
-
-.PHONY: build-push-image
-build-push-image: third-party-licenses ## Build and push the container image for both Amd64 and Arm64 architectures.
-	docker buildx build --build-arg BUILDKIT_INLINE_CACHE=1 --platform linux/amd64,linux/arm64 --push -t $(IMAGE_NAME):$(VERSION) -t $(IMAGE_NAME):latest -f Dockerfile.tinkerbell .
-
-.PHONY: image-agent
-image-agent: cross-compile-agent third-party-licenses ## Build the Tink Agent container image
-	docker build $(if $(DOCKER_CACHE_FROM),--cache-from $(DOCKER_CACHE_FROM)) -t $(IMAGE_NAME_AGENT) -f Dockerfile.agent .
-
-.PHONY: build-push-image-agent
-build-push-image-agent: third-party-licenses ## Build and push the container image for both Amd64 and Arm64 architectures.
-	docker buildx build --build-arg BUILDKIT_INLINE_CACHE=1 --platform linux/amd64,linux/arm64 --push -t $(IMAGE_NAME_AGENT):$(VERSION) -t $(IMAGE_NAME_AGENT):latest -f Dockerfile.agent .
+.PHONY: build-image-push
+build-image-push: $(GORELEASER) ## Build and push the container images
+	$(GORELEASER) release --clean --skip=validate --skip=sign ${GORELEASER_EXTRA_FLAGS}
 
 ######### Build container images - end   #########
 
 .PHONY: clean
-clean: ## Remove all cross compiled Tinkerbell binaries
-	rm -f out/tinkerbell out/tinkerbell-linux-amd64 out/tinkerbell-linux-arm64
-
-.PHONY: clean-agent
-clean-agent: ## Remove all cross compiled Tink Agent binaries
-	rm -f out/tink-agent out/tink-agent-linux-amd64 out/tink-agent-linux-arm64
+clean: ## Remove all generated binaries
+	rm -rf dist out
 
 .PHONY: clean-tools
 clean-tools: ## Remove all tools
-	rm -rf $(TOOLS_DIR)
+	rm -rf $(TOOLS_BIN_DIR)
 
 .PHONY: clean-all
-clean-all: clean clean-agent clean-tools ## Remove all binaries and tools
-	rm -f out/.generate-proto.stamp out/.generate-go.stamp
-	rm -f out/.ui-install-deps.stamp out/.ui-templ.stamp out/.ui-css.stamp out/.ui-generate.stamp out/.generate.stamp
+clean-all: clean clean-tools ## Remove all binaries and tools
 
 ############## Tools ##############
-$(GOIMPORTS_FQP):
-	GOBIN=$(TOOLS_DIR) go install golang.org/x/tools/cmd/goimports@$(GOIMPORT_VER)
-	@mv $(TOOLS_DIR)/goimports $(GOIMPORTS_FQP)
 
-$(CONTROLLER_GEN_FQP):
-	GOBIN=$(TOOLS_DIR) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
-	@mv $(TOOLS_DIR)/controller-gen $(CONTROLLER_GEN_FQP)
+$(GORELEASER):
+	mkdir -p $(TOOLS_BIN_DIR)
+	GOBIN=$(TOOLS_BIN_DIR) go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VER)
+	@mv $(TOOLS_BIN_DIR)/goreleaser $(GORELEASER)
 
-$(PROTOC_GEN_GO_GRPC_FQP):
-	GOBIN=$(TOOLS_DIR) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VER)
-	@mv $(TOOLS_DIR)/protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC_FQP)
-
-$(PROTOC_GEN_GO_FQP):
-	GOBIN=$(TOOLS_DIR) go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VER)
-	@mv $(TOOLS_DIR)/protoc-gen-go $(PROTOC_GEN_GO_FQP)
-
-$(BUF_FQP):
-	GOBIN=$(TOOLS_DIR) go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
-	@mv $(TOOLS_DIR)/buf $(BUF_FQP)
-
-$(UPX_FQP):
-	mkdir -p $(TOOLS_DIR)
-	(cd $(TOOLS_DIR); curl -sSfLO https://github.com/upx/upx/releases/download/v$(UPX_VER)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux.tar.xz)
-	(cd $(TOOLS_DIR); tar -xvf upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux.tar.xz)
-	@mv $(TOOLS_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux/upx $(UPX_FQP)
-	@rm -rf $(TOOLS_DIR)/upx-$(UPX_VER)-$(LOCAL_ARCH_ALT)_linux*
-
-$(GODEPGRAPH_FQP):
-	GOBIN=$(TOOLS_DIR) go install github.com/kisielk/godepgraph@$(GODEPGRAPH_VER)
-	@mv $(TOOLS_DIR)/godepgraph $(GODEPGRAPH_FQP)
-
-$(GO_LICENSES_FQP):
-	GOBIN=$(TOOLS_DIR) go install github.com/google/go-licenses/v2@$(GO_LICENSES_VER)
-	@mv $(TOOLS_DIR)/go-licenses $(GO_LICENSES_FQP)
+$(GOLANGCI_LINT):
+	mkdir -p $(TOOLS_BIN_DIR)
+	GOBIN=$(TOOLS_BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@mv $(TOOLS_BIN_DIR)/golangci-lint $(GOLANGCI_LINT)
 
 .PHONY: tools
-tools: $(GOIMPORTS_FQP) $(CONTROLLER_GEN_FQP) $(PROTOC_GEN_GO_GRPC_FQP) $(PROTOC_GEN_GO_FQP) $(BUF_FQP) $(UPX_FQP) $(GODEPGRAPH_FQP) $(GO_LICENSES_FQP) ## Install all tools
-
-############## Third-party license bundle ##############
-# Collect LICENSE and NOTICE files for every Go module compiled into the
-# tinkerbell and tink-agent binaries, and concatenate them into a per-arch
-# THIRD_PARTY_LICENSES-linux-<arch> file. Apache 2.0 section 4(d) requires
-# that upstream NOTICE files travel with anything we distribute (container
-# images, release archives); other licenses (BSD, MIT, MPL, etc.) similarly
-# require that the license text and copyright notices be reproduced. The
-# Dockerfiles select the per-arch file matching ${TARGETARCH}, mirroring the
-# per-arch binary pattern in cross-compile / cross-compile-agent above, so
-# each shipped image carries exactly the licenses for the binary it contains.
-THIRD_PARTY_STAGE_DIR := out/third_party
-third_party_licenses := out/THIRD_PARTY_LICENSES-linux-amd64 out/THIRD_PARTY_LICENSES-linux-arm64
-
-.PHONY: third-party-licenses
-third-party-licenses: $(third_party_licenses) ## Generate per-arch third-party license bundles for compiled-in deps
-
-# Static pattern rule: one recipe builds out/THIRD_PARTY_LICENSES-linux-<arch>
-# for each arch listed above. $* is the arch (amd64|arm64). The bundle
-# generation logic lives in script/third_party_licenses.sh so it is
-# shellcheck-able and runnable standalone.
-#
-# Prereqs include $(LICENSE_BUNDLE_GO_SOURCES) (not just go.mod/go.sum)
-# because adding/removing imports or flipping `//go:build` tags can change
-# the set of modules compiled in without touching go.mod, which would
-# otherwise leave Make thinking a stale bundle is up to date.
-#
-# We use `git ls-files` instead of `find` because Make expands this at
-# parse time on every invocation (including unrelated targets), and the
-# git index lookup is effectively free (~ms) versus a full filesystem
-# walk. `git ls-files` also inherently honors .gitignore, so the staged
-# third-party sources this rule writes under out/ are excluded without
-# needing manual -not -path rules (which would otherwise cause a
-# self-triggering rebuild loop, since those files are newer than the
-# bundle on every subsequent run).
-LICENSE_BUNDLE_GO_SOURCES := $(shell git ls-files -- '*.go')
-$(third_party_licenses): out/THIRD_PARTY_LICENSES-linux-%: $(GO_LICENSES_FQP) go.mod go.sum script/third_party_licenses_header.txt script/third_party_licenses.sh $(LICENSE_BUNDLE_GO_SOURCES)
-	GO_TAGS="$(GO_TAGS)" script/third_party_licenses.sh \
-		$* $@ $(THIRD_PARTY_STAGE_DIR)/$* $(GO_LICENSES_FQP) script/third_party_licenses_header.txt
-
-.PHONY: clean-third-party-licenses
-clean-third-party-licenses: ## Remove the generated third-party license bundles
-	rm -rf $(THIRD_PARTY_STAGE_DIR) $(third_party_licenses)
+tools: $(GORELEASER) $(GOLANGCI_LINT) ## Install all tools
 
 ############## Linting ##############
 .PHONY: lint
 lint: _lint  ## Run linting
 
-LINT_ARCH := $(shell uname -m)
-LINT_OS := $(shell uname)
-LINT_OS_LOWER := $(shell echo $(LINT_OS) | tr '[:upper:]' '[:lower:]')
-LINT_ROOT := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
-
-# shellcheck and hadolint lack arm64 native binaries: rely on x86-64 emulation
-ifeq ($(LINT_OS),Darwin)
-	ifeq ($(LINT_ARCH),arm64)
-		LINT_ARCH=x86_64
-	endif
-endif
-
 LINTERS :=
 FIXERS :=
 
-GOLANGCI_LINT_CONFIG := $(LINT_ROOT)/.golangci.yml
-GOLANGCI_LINT_BIN := $(LINT_ROOT)/out/linters/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_ARCH)
-$(GOLANGCI_LINT_BIN):
-	mkdir -p $(LINT_ROOT)/out/linters
-	rm -rf $(LINT_ROOT)/out/linters/golangci-lint-*
-	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(LINT_ROOT)/out/linters $(GOLANGCI_LINT_VERSION)
-	mv $(LINT_ROOT)/out/linters/golangci-lint $@
-
+# Absolute path: the lint target uses `find -execdir`, so the config must resolve
+# from whichever module directory golangci-lint is invoked in.
+GOLANGCI_LINT_CONFIG := $(CURDIR)/.golangci.yml
 LINTERS += golangci-lint-lint
-golangci-lint-lint: $(GOLANGCI_LINT_BIN)
-	find . -name go.mod -not -path "./out/*" -execdir sh -c '"$(GOLANGCI_LINT_BIN)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'
+golangci-lint-lint: $(GOLANGCI_LINT)
+	find $(PWD) -name go.mod -not -path "$(PWD)/out/*" -not -path "$(PWD)/bin/*" -execdir sh -c '"$(GOLANGCI_LINT)" run --timeout 10m -c "$(GOLANGCI_LINT_CONFIG)"' '{}' '+'
 
 FIXERS += golangci-lint-fix
-golangci-lint-fix: $(GOLANGCI_LINT_BIN)
-	find . -name go.mod -not -path "./out/*" -execdir "$(GOLANGCI_LINT_BIN)" run -c "$(GOLANGCI_LINT_CONFIG)" --fix \;
+golangci-lint-fix: $(GOLANGCI_LINT)
+	find $(PWD) -name go.mod -not -path "$(PWD)/out/*" -not -path "$(PWD)/bin/*" -execdir "$(GOLANGCI_LINT)" run -c "$(GOLANGCI_LINT_CONFIG)" --fix \;
 
 .PHONY: _lint $(LINTERS)
 _lint: $(LINTERS)

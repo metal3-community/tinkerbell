@@ -39,7 +39,7 @@ set idx:int32 0
 :retry_kernel
 kernel ${download-url}/${kernel} \
 syslog_host=${syslog_host} grpc_authority=${grpc_authority} tinkerbell_tls=${tinkerbell_tls} worker_id=${worker_id} hw_addr=${mac} \
-console=tty1 console=tty2 console=ttyAMA0,115200 console=ttyAMA1,115200 console=ttyS0,115200 console=ttyS1,115200 \
+{{ .Console }} \
 intel_iommu=on iommu=pt {{- range .ExtraKernelParams}} {{.}} {{- end}} initrd=${initrd} && goto download_initrd || iseq ${idx} ${retries} && goto kernel-error || inc idx && echo retry in ${retry_delay} seconds ; sleep ${retry_delay} ; goto retry_kernel
 
 :download_initrd

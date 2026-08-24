@@ -1,7 +1,7 @@
 # Second Star
 
 Second Star is the serial over SSH capability in Tinkerbell.
-It is an SSH wrapper over the `ipmitool sol activate` command. The SOL (serial-over-lan) command connects to a Hardware BMC's (Baseboard Management Controller) serial console using the ipmi protocol.
+It is an SSH wrapper over the `ipmi sol activate` command. The SOL (serial-over-lan) command connects to a Hardware BMC's (Baseboard Management Controller) serial console using the ipmi protocol.
 
 ## Prerequisites
 

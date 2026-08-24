@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp"
 	"github.com/tinkerbell/tinkerbell/smee/internal/hardware"
 	"github.com/tinkerbell/tinkerbell/smee/internal/metric"
 	"go.opentelemetry.io/otel/attribute"
@@ -65,7 +67,7 @@ func (h *Handler) HandlerFunc() http.HandlerFunc {
 			hw, err := hardware.GetByMac(ctx, ha, h.Backend)
 			if err != nil && h.StaticIPXEEnabled {
 				h.Logger.Info("serving static ipxe script", "mac", ha.String(), "reasonForStaticScript", err)
-				h.serveStaticIPXEScript(w)
+				h.serveStaticIPXEScript(w, ha)
 				return
 			}
 			if err != nil || !hw.AllowNetboot {
@@ -81,7 +83,8 @@ func (h *Handler) HandlerFunc() http.HandlerFunc {
 			hw, err := hardware.GetByIP(ctx, ip, h.Backend)
 			if err != nil && h.StaticIPXEEnabled {
 				h.Logger.Info("serving static ipxe script", "client", r.RemoteAddr, "error", err)
-				h.serveStaticIPXEScript(w)
+				// Only the source IP is known here, not the MAC, so the console falls back to the non-Pi default.
+				h.serveStaticIPXEScript(w, nil)
 				return
 			}
 			if err != nil || !hw.AllowNetboot {
@@ -100,9 +103,10 @@ func (h *Handler) HandlerFunc() http.HandlerFunc {
 	}
 }
 
-func (h *Handler) serveStaticIPXEScript(w http.ResponseWriter) {
+func (h *Handler) serveStaticIPXEScript(w http.ResponseWriter, mac net.HardwareAddr) {
 	// Serve static iPXE script.
 	auto := Hook{
+		Console:           consoleForMAC(mac),
 		DownloadURL:       h.OSIEURL,
 		ExtraKernelParams: h.ExtraKernelParams,
 		SyslogHost:        h.PublicSyslogFQDN,
@@ -123,6 +127,22 @@ func (h *Handler) serveStaticIPXEScript(w http.ResponseWriter) {
 		h.Logger.Error(err, "unable to send the static ipxe script")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+}
+
+// consoleForMAC returns the console kernel parameters appropriate for the board identified by mac.
+// The last console entry wins as Linux's primary /dev/console.
+//   - Raspberry Pi 5 boards use the dedicated debug UART (ttyAMA10).
+//   - Other Raspberry Pi boards use the GPIO-header UART (ttyAMA0).
+//   - Everything else, including an unknown or nil mac, falls back to the standard serial consoles.
+func consoleForMAC(mac net.HardwareAddr) string {
+	switch {
+	case dhcp.IsRaspberryPI5(mac):
+		return "console=tty1 console=ttyAMA10,115200"
+	case dhcp.IsRaspberryPI(mac):
+		return "console=tty1 console=ttyAMA0,115200"
+	default:
+		return "console=tty0 console=ttyS0,115200 console=ttyS1,115200"
 	}
 }
 
@@ -193,7 +213,8 @@ func (h *Handler) serveBootScript(ctx context.Context, w http.ResponseWriter, na
 	}
 }
 
-func (h *Handler) defaultScript(span trace.Span, hw hardware.Info) (string, error) {
+// buildHook constructs a Hook struct from hardware info and handler configuration.
+func (h *Handler) buildHook(span trace.Span, hw hardware.Info) Hook {
 	mac := hw.MACAddress
 	arch := hw.Arch
 	if arch == "" {
@@ -232,7 +253,11 @@ func (h *Handler) defaultScript(span trace.Span, hw hardware.Info) (string, erro
 		auto.InitrdName = h.InitrdName + "-" + arch
 	}
 	if hw.OSIE.BaseURL != nil && hw.OSIE.BaseURL.String() != "" {
-		auto.DownloadURL = hw.OSIE.BaseURL.String()
+		u := *hw.OSIE.BaseURL
+		if osieURL, err := url.Parse(h.OSIEURL); err == nil && osieURL.Path != "" && (u.Path == "" || u.Path == "/") {
+			u.Path = osieURL.Path
+		}
+		auto.DownloadURL = u.String()
 	}
 	if hw.OSIE.Kernel != "" {
 		auto.KernelName = hw.OSIE.Kernel
@@ -244,6 +269,11 @@ func (h *Handler) defaultScript(span trace.Span, hw hardware.Info) (string, erro
 		auto.TraceID = span.SpanContext().TraceID().String()
 	}
 
+	return auto
+}
+
+func (h *Handler) defaultScript(span trace.Span, hw hardware.Info) (string, error) {
+	auto := h.buildHook(span, hw)
 	return GenerateTemplate(auto, HookScript)
 }
 

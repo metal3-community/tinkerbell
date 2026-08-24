@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path"
 	"time"
 
 	gssh "github.com/gliderlabs/ssh"
@@ -20,12 +21,11 @@ type Reader interface {
 }
 
 type Config struct {
-	BindAddr     netip.Addr
-	SSHPort      int
-	HostKey      ssh.Signer
-	IPMITOOLPath string
-	IdleTimeout  time.Duration
-	Backend      Reader
+	BindAddr    netip.Addr
+	SSHPort     int
+	HostKey     ssh.Signer
+	IdleTimeout time.Duration
+	Backend     Reader
 }
 
 func (c *Config) Start(ctx context.Context, log logr.Logger) error {
@@ -36,7 +36,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	log.Info("starting ssh server", "addrPort", addrPort)
 	server := &gssh.Server{
 		Addr:             addrPort,
-		Handler:          internal.Handler(log, internal.NewKeyValueStore(), c.IPMITOOLPath),
+		Handler:          internal.Handler(log, internal.NewKeyValueStore()),
 		PublicKeyHandler: internal.PubkeyAuth(c.Backend, log),
 		Banner:           "Second star to the right and straight on 'til morning\n[Use ~. to disconnect]\n",
 		IdleTimeout:      c.IdleTimeout,
@@ -65,7 +65,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 
 // HostKeyFrom reads a host key from a file and returns a signer.
 func HostKeyFrom(filePath string) (ssh.Signer, error) {
-	hostKey, err := os.ReadFile(filePath)
+	hostKey, err := os.ReadFile(path.Clean(filePath))
 	if err != nil {
 		return nil, fmt.Errorf("error reading host key: %w", err)
 	}

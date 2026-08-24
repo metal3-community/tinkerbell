@@ -1,4 +1,4 @@
-FROM alpine:3.24 AS ca-certs
+FROM --platform=$BUILDPLATFORM alpine:latest AS ca-certs
 
 RUN apk --no-cache add ca-certificates
 
@@ -7,7 +7,7 @@ FROM scratch
 ARG TARGETOS
 ARG TARGETARCH
 
-COPY out/tink-agent-${TARGETOS}-${TARGETARCH} /tink-agent
+COPY ${TARGETOS}/${TARGETARCH}/tink-agent /tink-agent
 COPY --from=ca-certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # Apache 2.0 section 4(d) attribution: ship the project LICENSE and the
 # generated third-party license bundle for compiled-in Go modules. Generate

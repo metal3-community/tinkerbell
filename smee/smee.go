@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"path"
 	"reflect"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/tinkerbell/tinkerbell/api/v1alpha1/tinkerbell"
 	"github.com/tinkerbell/tinkerbell/pkg/constant"
 	"github.com/tinkerbell/tinkerbell/pkg/data"
+	tftphandler "github.com/tinkerbell/tinkerbell/pkg/tftp/handler"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/handler/proxy"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/handler/reservation"
 	"github.com/tinkerbell/tinkerbell/smee/internal/dhcp/server"
@@ -31,8 +33,32 @@ import (
 	"github.com/tinkerbell/tinkerbell/smee/internal/ipxe/script"
 	"github.com/tinkerbell/tinkerbell/smee/internal/iso"
 	"github.com/tinkerbell/tinkerbell/smee/internal/metric"
+	"github.com/tinkerbell/tinkerbell/smee/internal/osie"
 	"github.com/tinkerbell/tinkerbell/smee/internal/syslog"
 	"golang.org/x/sync/errgroup"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+)
+
+const (
+	// dhcpLeaderElectionID is the name of the Lease used to elect the single
+	// Smee instance that serves DHCP.
+	dhcpLeaderElectionID = "smee-dhcp.tinkerbell.org"
+
+	// DHCP leader election timings. These match client-go's defaults, but are
+	// stated explicitly because DHCP correctness depends on the relationship
+	// between them: a challenger waits dhcpLeaseDuration past the last renewal
+	// it observed before taking over, while this instance stops serving at
+	// dhcpRenewDeadline, so the two never answer at the same time.
+	dhcpLeaseDuration = 15 * time.Second
+	dhcpRenewDeadline = 10 * time.Second
+	dhcpRetryPeriod   = 2 * time.Second
+
+	// serviceAccountNamespaceFile is where a pod's own namespace is projected.
+	// Used when no leader election namespace is configured.
+	serviceAccountNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
 // MetricsRegistry returns the Prometheus registry that contains all Smee metrics.
@@ -57,6 +83,7 @@ const (
 	// Defaults consumers can use.
 	DefaultTFTPAssetDir      = ""
 	DefaultPXEHTTPPathPrefix = "/tftp/"
+	DefaultTFFTPAnticipate   = uint(1)
 	DefaultTFFTPPort         = 69
 	DefaultTFFTPBlockSize    = 512
 	DefaultTFFTPSinglePort   = true
@@ -65,9 +92,13 @@ const (
 	DefaultSyslogPort        = 514
 	DefaultTinkServerPort    = 42113
 
+	IPXEBinaryPattern = `\.(efi|kpxe|pxe)$`
+	IPXEScriptPattern = `(^pxelinux\.cfg/|(config|cmdline)\.txt$)`
+
 	IPXEBinaryURI = "/ipxe/binary/"
 	IPXEScriptURI = "/ipxe/script/"
 	ISOURI        = "/iso/"
+	OSIEURI       = "/images/"
 )
 
 type DHCPMode string
@@ -100,6 +131,8 @@ type Config struct {
 	IPXE IPXE
 	// ISO is the configuration for the ISO service.
 	ISO ISO
+	// OSIE is the configuration for the OSIE image service.
+	OSIE OSIE
 	// OTEL is the configuration for OpenTelemetry.
 	OTEL OTEL
 	// PXEHTTP is the configuration for serving pxelinux.cfg and the TFTP asset
@@ -113,6 +146,16 @@ type Config struct {
 	TinkServer TinkServer
 	// TLS is the configuration for TLS.
 	TLS TLS
+	// EnableLeaderElection gates DHCP serving behind Kubernetes leader election
+	// so only a single Smee instance serves DHCP at a time. When false (or when
+	// Client is nil, e.g. file/none backends) DHCP is served unconditionally.
+	EnableLeaderElection bool
+	// LeaderElectionNamespace is the namespace in which the leader election Lease
+	// is created. When empty, the namespace is auto-detected (in-cluster).
+	LeaderElectionNamespace string
+	// Client is the Kubernetes client config used for leader election. When nil,
+	// leader election is skipped regardless of EnableLeaderElection.
+	Client *rest.Config
 }
 
 type Syslog struct {
@@ -135,6 +178,8 @@ type TFTP struct {
 	BlockSize int
 	// SinglePort configures whether to use single-port TFTP mode.
 	SinglePort bool
+	// Anticipate is the number of packets to send before the first ACK. (Experimental)
+	Anticipate uint
 	// Timeout is the timeout for each serving each TFTP request.
 	Timeout time.Duration
 	// Enabled is a flag to enable or disable the TFTP server.
@@ -235,6 +280,13 @@ type ISO struct {
 	StaticIPAMEnabled bool
 }
 
+// OSIE holds configuration for the OSIE image service.
+type OSIE struct {
+	Enabled   bool
+	URLPrefix string
+	ImagePath string
+}
+
 type TinkServer struct {
 	UseTLS      bool
 	InsecureTLS bool
@@ -294,6 +346,11 @@ func NewConfig(c Config) *Config {
 			PatchMagicString:  "",
 			StaticIPAMEnabled: false,
 		},
+		OSIE: OSIE{
+			Enabled:   true,
+			URLPrefix: OSIEURI,
+			ImagePath: "/var/lib/images",
+		},
 		OTEL: OTEL{
 			Endpoint:         "",
 			InsecureEndpoint: false,
@@ -312,9 +369,11 @@ func NewConfig(c Config) *Config {
 			BlockSize:  DefaultTFFTPBlockSize,
 			SinglePort: DefaultTFFTPSinglePort,
 			Timeout:    DefaultTFFTPTimeout,
+			Anticipate: DefaultTFFTPAnticipate,
 			Enabled:    true,
 		},
-		TinkServer: TinkServer{},
+		TinkServer:           TinkServer{},
+		EnableLeaderElection: true,
 	}
 
 	if err := mergo.Merge(defaults, &c, mergo.WithTransformers(&c)); err != nil {
@@ -355,13 +414,17 @@ func (c *Config) PXEHTTPHandler(log logr.Logger) http.Handler {
 		return nil
 	}
 	resolver := hardware.BackendResolver{Backend: c.Backend}
-	router := binary.Router{
-		Log: log,
-		Routes: []binary.Route{ // order matters here, first match wins
-			binary.PXELinuxMACRoute{Log: log, Resolver: resolver},
-			binary.DiskAssetRoute{Log: log, Dir: c.TFTP.AssetDir},
-		},
+	routes := []binary.Route{ // order matters here, first match wins
+		binary.PXELinuxMACRoute{Log: log, Resolver: resolver},
 	}
+	if c.IPXE.HTTPScriptServer.Enabled {
+		// Same template fallback as the TFTP server, so pxe-over-http clients
+		// get generated configs when the Hardware CRD doesn't define one.
+		jh := c.newScriptHandler(log.WithName("script"))
+		routes = append(routes, binary.HandlerRoute{RouteName: "pxe-template", Handler: tftphandler.HandlerFunc(jh.HandleTFTP)})
+	}
+	routes = append(routes, binary.DiskAssetRoute{Log: log, Dir: c.TFTP.AssetDir})
+	router := binary.Router{Log: log, Routes: routes}
 	return http.HandlerFunc(binary.NewHTTPHandler(log, router, c.PXEHTTP.PathPrefix).Handle)
 }
 
@@ -371,10 +434,17 @@ func (c *Config) ScriptHandler(log logr.Logger) http.Handler {
 	if !c.IPXE.HTTPScriptServer.Enabled {
 		return nil
 	}
-	jh := script.Handler{
+	jh := c.newScriptHandler(log)
+	return jh.HandlerFunc()
+}
+
+// newScriptHandler builds the shared iPXE/pxelinux script handler used by both
+// the HTTP script server and the TFTP template route.
+func (c *Config) newScriptHandler(log logr.Logger) script.Handler {
+	return script.Handler{
 		Logger:                log,
 		Backend:               c.Backend,
-		OSIEURL:               c.IPXE.HTTPScriptServer.OSIEURL.String(),
+		OSIEURL:               c.osieURL(),
 		ExtraKernelParams:     c.IPXE.HTTPScriptServer.ExtraKernelArgs,
 		PublicSyslogFQDN:      c.syslogHost(),
 		TinkServerTLS:         c.TinkServer.UseTLS,
@@ -386,7 +456,67 @@ func (c *Config) ScriptHandler(log logr.Logger) http.Handler {
 		KernelName:            c.IPXE.HTTPScriptServer.KernelName,
 		InitrdName:            c.IPXE.HTTPScriptServer.InitrdName,
 	}
-	return jh.HandlerFunc()
+}
+
+// TFTPHandler returns the TFTP read handler serving all of Smee's TFTP
+// content. Requests are dispatched through a binary.Router chain; order
+// matters, first claim wins:
+//
+//  1. embedded iPXE binaries (when the iPXE binary server is enabled)
+//  2. per-Hardware pxelinux.cfg (PXELINUX.Config from the Hardware CRD)
+//  3. per-Hardware Raspberry Pi netboot (RPI config.txt/cmdline.txt/firmware)
+//  4. generated pxelinux.cfg / RPi configs from built-in templates
+//     (when the iPXE script server is enabled)
+//  5. OSIE images from OSIE.ImagePath (when the OSIE service is enabled)
+//  6. extra assets from TFTP.AssetDir (when set)
+//
+// Returns nil when no route is enabled.
+func (c *Config) TFTPHandler(log logr.Logger) tftphandler.Handler {
+	resolver := hardware.BackendResolver{Backend: c.Backend}
+
+	// The RPi firmware route serves from the asset dir; fall back to the OSIE
+	// image path so RPi firmware works without a separate asset directory.
+	assetDir := c.TFTP.AssetDir
+	if assetDir == "" && c.OSIE.Enabled {
+		assetDir = c.OSIE.ImagePath
+	}
+
+	var routes []binary.Route
+	if c.IPXE.HTTPBinaryServer.Enabled {
+		routes = append(routes, binary.EmbeddedIPXERoute{Log: log, Patch: []byte(c.IPXE.EmbeddedScriptPatch)})
+	}
+	routes = append(routes,
+		binary.PXELinuxMACRoute{Log: log, Resolver: resolver},
+		binary.RPiNetbootRoute{Log: log, Resolver: resolver, AssetDir: assetDir},
+	)
+	if c.IPXE.HTTPScriptServer.Enabled {
+		jh := c.newScriptHandler(log.WithName("script"))
+		routes = append(routes, binary.HandlerRoute{RouteName: "pxe-template", Handler: tftphandler.HandlerFunc(jh.HandleTFTP)})
+	}
+	if h := c.OSIETFTPHandler(log.WithName("osie")); h != nil {
+		routes = append(routes, binary.HandlerRoute{RouteName: "osie-asset", Handler: h})
+	}
+	if c.TFTP.AssetDir != "" {
+		routes = append(routes, binary.DiskAssetRoute{Log: log, Dir: c.TFTP.AssetDir})
+	}
+	if len(routes) == 0 {
+		return nil
+	}
+
+	t := binary.TFTP{Log: log, Router: binary.Router{Log: log, Routes: routes}}
+	return tftphandler.HandlerFunc(t.HandleRead)
+}
+
+// osieURL returns the effective OSIE download URL for iPXE scripts.
+// When the OSIE service is enabled and the configured OSIEURL has no path,
+// the OSIE URL prefix is applied so that hw.OSIE.BaseURL overrides in
+// buildHook can inherit the correct path via url.Parse.
+func (c *Config) osieURL() string {
+	u := *c.IPXE.HTTPScriptServer.OSIEURL
+	if c.OSIE.Enabled && u.Path == "" && c.OSIE.URLPrefix != "" {
+		u.Path = c.OSIE.URLPrefix
+	}
+	return u.String()
 }
 
 // syslogHost returns the host used for the syslog_host kernel parameter in iPXE scripts.
@@ -432,6 +562,32 @@ func (c *Config) ISOHandler(log logr.Logger) (http.Handler, error) {
 	return h, nil
 }
 
+// OSIEHandler returns an http.Handler that serves OSIE files from the filesystem.
+// Returns nil, nil if the OSIE service is disabled.
+func (c *Config) OSIEHandler() (http.Handler, error) {
+	if !c.OSIE.Enabled {
+		return nil, nil
+	}
+	oc := osie.NewConfig(
+		osie.WithURLPrefix(c.OSIE.URLPrefix),
+		osie.WithImagePath(c.OSIE.ImagePath),
+	)
+	return oc.Handle()
+}
+
+// OSIETFTPHandler returns a TFTP handler that serves OSIE files.
+// Returns nil if the OSIE service is disabled.
+func (c *Config) OSIETFTPHandler(log logr.Logger) tftphandler.Handler {
+	if !c.OSIE.Enabled {
+		return nil
+	}
+	oc := osie.NewConfig(
+		osie.WithURLPrefix(c.OSIE.URLPrefix),
+		osie.WithImagePath(c.OSIE.ImagePath),
+	)
+	return oc.TFTPHandler(log)
+}
+
 // Start will run Smee non-HTTP services (DHCP, TFTP, syslog).
 // HTTP serving is handled externally by the HTTP server.
 // runSyslogServer starts the syslog receiver bound to addr and blocks until it
@@ -460,6 +616,7 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+
 	// syslog
 	if c.Syslog.Enabled {
 		addr := netip.AddrPortFrom(c.Syslog.BindAddr, c.Syslog.BindPort)
@@ -469,36 +626,6 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		log.Info("starting syslog server", "bindAddr", addr)
 		g.Go(func() error {
 			return runSyslogServer(ctx, log, addr.String())
-		})
-	}
-
-	// tftp
-	if c.TFTP.Enabled {
-		addrPort := netip.AddrPortFrom(c.TFTP.BindAddr, c.TFTP.BindPort)
-		if !addrPort.IsValid() {
-			return fmt.Errorf("invalid TFTP bind address: IP: %v, Port: %v", addrPort.Addr(), addrPort.Port())
-		}
-		resolver := hardware.BackendResolver{Backend: c.Backend}
-		tftpHandler := binary.TFTP{
-			Log:                  log,
-			EnableTFTPSinglePort: c.TFTP.SinglePort,
-			Addr:                 addrPort,
-			Timeout:              c.TFTP.Timeout,
-			BlockSize:            c.TFTP.BlockSize,
-			Router: binary.Router{
-				Log: log,
-				Routes: []binary.Route{ // order matters here, first match wins
-					binary.EmbeddedIPXERoute{Log: log, Patch: []byte(c.IPXE.EmbeddedScriptPatch)},
-					binary.PXELinuxMACRoute{Log: log, Resolver: resolver},
-					binary.RPiNetbootRoute{Log: log, Resolver: resolver, AssetDir: c.TFTP.AssetDir},
-					binary.DiskAssetRoute{Log: log, Dir: c.TFTP.AssetDir},
-				},
-			},
-		}
-
-		log.Info("starting tftp server", "bindAddr", addrPort.String())
-		g.Go(func() error {
-			return tftpHandler.ListenAndServe(ctx)
 		})
 	}
 
@@ -512,16 +639,15 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 		if !dhcpAddrPort.IsValid() {
 			return fmt.Errorf("invalid DHCP bind address: IP: %v, Port: %v", dhcpAddrPort.Addr(), dhcpAddrPort.Port())
 		}
-		log.Info("starting dhcp server", "bindAddr", dhcpAddrPort)
 		g.Go(func() error {
-			conn, err := server4.NewIPv4UDPConn(c.DHCP.BindInterface, net.UDPAddrFromAddrPort(dhcpAddrPort))
-			if err != nil {
-				return err
+			// Leader election ensures only a single Smee instance serves DHCP at a
+			// time. This is compatible with per-pod IPs assigned by CNIs such as
+			// Multus macvlan, requiring no host network interface manipulation.
+			if c.EnableLeaderElection && c.Client != nil {
+				return c.serveDHCPWithLeaderElection(ctx, log.WithName("leaderelection"), dh, dhcpAddrPort)
 			}
-			defer conn.Close()
-			ds := &server.DHCP{Logger: log, Conn: conn, Handlers: []server.Handler{dh}}
-
-			return ds.Serve(ctx)
+			log.Info("starting dhcp server", "bindAddr", dhcpAddrPort)
+			return c.serveDHCP(ctx, log, dh, dhcpAddrPort)
 		})
 	}
 
@@ -530,6 +656,175 @@ func (c *Config) Start(ctx context.Context, log logr.Logger) error {
 	}
 	log.Info("smee is shutting down", "reason", ctx.Err())
 	return nil
+}
+
+// serveDHCP binds a UDP listener and serves DHCP requests until ctx is
+// cancelled. Cancelling ctx closes the listener and returns cleanly.
+func (c *Config) serveDHCP(ctx context.Context, log logr.Logger, dh server.Handler, addrPort netip.AddrPort) error {
+	conn, err := server4.NewIPv4UDPConn(c.DHCP.BindInterface, net.UDPAddrFromAddrPort(addrPort))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ds := &server.DHCP{Logger: log, Conn: conn, Handlers: []server.Handler{dh}}
+	return ds.Serve(ctx)
+}
+
+// serveDHCPWithLeaderElection serves DHCP only while this instance holds the
+// Kubernetes Lease named dhcpLeaderElectionID, campaigning for it in a loop.
+//
+// Losing the Lease stops the DHCP server and closes its socket, after which
+// this instance returns to standby and waits to acquire it again. Losing the
+// Lease is deliberately not an error: DHCP is the only leader-elected service
+// in this binary, so treating it as fatal would take HTTP, TFTP, the Tink
+// server and the controllers down with it, and a Lease that flaps would put the
+// whole process into CrashLoopBackOff. This returns only when ctx is cancelled
+// or the DHCP server itself fails.
+//
+// This is compatible with per-pod IPs assigned by CNIs such as Multus macvlan,
+// requiring no host network interface manipulation.
+func (c *Config) serveDHCPWithLeaderElection(ctx context.Context, log logr.Logger, dh server.Handler, addrPort netip.AddrPort) error {
+	namespace := c.LeaderElectionNamespace
+	if namespace == "" {
+		ns, err := os.ReadFile(serviceAccountNamespaceFile)
+		if err != nil {
+			return fmt.Errorf("determining dhcp leader election namespace: %w", err)
+		}
+		namespace = strings.TrimSpace(string(ns))
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("determining dhcp leader election identity: %w", err)
+	}
+	// The UUID distinguishes this process from an earlier one on the same pod
+	// that may not have fully exited yet.
+	identity := hostname + "_" + string(uuid.NewUUID())
+
+	// The renew deadline caps the client timeout, so one hung API request cannot
+	// by itself cost this instance the Lease.
+	lock, err := resourcelock.NewFromKubeconfig(
+		resourcelock.LeasesResourceLock,
+		namespace,
+		dhcpLeaderElectionID,
+		resourcelock.ResourceLockConfig{Identity: identity},
+		c.Client,
+		dhcpRenewDeadline,
+	)
+	if err != nil {
+		return fmt.Errorf("creating dhcp leader election lock: %w", err)
+	}
+
+	log.Info("waiting to acquire dhcp leadership",
+		"lease", dhcpLeaderElectionID, "namespace", namespace, "identity", identity)
+
+	for ctx.Err() == nil {
+		if err := c.leadDHCP(ctx, log, dh, addrPort, lock); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// leadDHCP runs one leadership cycle: campaign for the Lease, serve DHCP while
+// it is held, and return once it is lost or ctx is cancelled. It returns an
+// error only if the DHCP server itself failed.
+func (c *Config) leadDHCP(ctx context.Context, log logr.Logger, dh server.Handler, addrPort netip.AddrPort, lock resourcelock.Interface) error {
+	// Cancelling runCtx ends the campaign, so a DHCP failure unrelated to
+	// leadership (failing to bind, say) stops rather than being retried forever.
+	runCtx, endCampaign := context.WithCancel(ctx)
+	defer endCampaign()
+
+	var (
+		led    = make(chan struct{})
+		served = make(chan error, 1)
+		le     *leaderelection.LeaderElector
+		err    error
+	)
+
+	le, err = leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
+		Lock:            lock,
+		LeaseDuration:   dhcpLeaseDuration,
+		RenewDeadline:   dhcpRenewDeadline,
+		RetryPeriod:     dhcpRetryPeriod,
+		ReleaseOnCancel: true,
+		Name:            dhcpLeaderElectionID,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(leaderCtx context.Context) {
+				close(led)
+				log.Info("acquired dhcp leadership, starting dhcp server", "bindAddr", addrPort)
+
+				serveCtx, stopServing := context.WithCancel(leaderCtx)
+				defer stopServing()
+				go watchDHCPLease(serveCtx, log, le, stopServing)
+
+				if err := c.serveDHCP(serveCtx, log, dh, addrPort); err != nil && !errors.Is(err, context.Canceled) {
+					endCampaign()
+					served <- fmt.Errorf("dhcp server failed: %w", err)
+
+					return
+				}
+				served <- nil
+			},
+			OnStoppedLeading: func() {
+				// Also called when the campaign ends without ever leading.
+				select {
+				case <-led:
+					log.Info("lost dhcp leadership, stopped serving dhcp, standing by")
+				default:
+				}
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating dhcp leader elector: %w", err)
+	}
+
+	le.Run(runCtx)
+
+	// Run returns as soon as leadership ends, without waiting for
+	// OnStartedLeading to unwind. Wait for serveDHCP to return, and so for its
+	// socket to be closed, before campaigning again: the DHCP listener sets
+	// SO_REUSEPORT, so a second bind would otherwise quietly succeed alongside
+	// the first and this instance would answer twice.
+	select {
+	case <-led:
+		return <-served
+	default:
+		return nil
+	}
+}
+
+// watchDHCPLease stops the DHCP server as soon as the Lease can no longer be
+// proven held, instead of waiting for client-go to unwind.
+//
+// client-go cancels the leader context only after its renew loop has given up
+// and its release call has returned. That release is a blocking API call, so
+// when the API server is unreachable — the very case in which the Lease is
+// being lost — it runs until the client timeout. The delay can carry this
+// instance past the point where a challenger takes over, leaving two instances
+// answering DHCP at once. Check reports an error once the last successful
+// renewal is older than LeaseDuration plus the given tolerance, so a negative
+// tolerance brings that forward to the renew deadline.
+func watchDHCPLease(ctx context.Context, log logr.Logger, le *leaderelection.LeaderElector, stopServing func()) {
+	ticker := time.NewTicker(dhcpRetryPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := le.Check(dhcpRenewDeadline - dhcpLeaseDuration); err != nil {
+				log.Info("dhcp lease is no longer renewable, stopping dhcp server", "err", err)
+				stopServing()
+
+				return
+			}
+		}
+	}
 }
 
 func (c *Config) dhcpHandler(log logr.Logger) (server.Handler, error) {

@@ -3,6 +3,7 @@ package containerd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -275,7 +276,8 @@ func TestParseVolumes(t *testing.T) {
 			t.Fatalf("parseVolumes() returned %d mounts, want 1", len(got))
 		}
 		want := filepath.Join(base, "reldir")
-		if got[0].Source != want {
+		src := strings.Replace(got[0].Source, "/private/var", "/var", 1)
+		if src != want {
 			t.Errorf("Source = %q, want %q", got[0].Source, want)
 		}
 		if _, err := os.Stat(want); err != nil {
@@ -333,6 +335,7 @@ func TestEnsureBindMountSource(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		got = strings.Replace(got, "/private/var", "/var", 1) // Handle macOS /private prefix for temp dirs
 		want := filepath.Join(base, "mydir")
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)

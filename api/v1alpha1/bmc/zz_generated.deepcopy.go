@@ -505,8 +505,8 @@ func (in *ProviderOptions) DeepCopyInto(out *ProviderOptions) {
 		*out = new(IntelAMTOptions)
 		**out = **in
 	}
-	if in.IPMITOOL != nil {
-		in, out := &in.IPMITOOL, &out.IPMITOOL
+	if in.IPMI != nil {
+		in, out := &in.IPMI, &out.IPMI
 		*out = new(IPMITOOLOptions)
 		**out = **in
 	}

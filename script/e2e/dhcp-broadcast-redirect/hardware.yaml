@@ -1,0 +1,21 @@
+# One reservation, keyed on the MAC the probe container is given. Smee answers a
+# DHCPDISCOVER from this MAC with this address.
+- apiVersion: tinkerbell.org/v1alpha1
+  kind: Hardware
+  metadata:
+    name: e2e-pxe-client
+    namespace: default
+  spec:
+    interfaces:
+      - dhcp:
+          mac: "52:54:00:dc:be:ef"
+          hostname: "e2e-pxe-client"
+          lease_time: 3600
+          name_servers:
+            - "1.1.1.1"
+          ip:
+            address: "172.30.99.10"
+            netmask: "255.255.0.0"
+            gateway: "172.30.0.1"
+        netboot:
+          allowPXE: true

@@ -26,14 +26,17 @@ type SmeeConfig struct {
 	// The cmd package is responsible for putting the fields back together into a url.URL for use in service package configs.
 	DHCPIPXEScript URLBuilder
 	LogLevel       int
-	// MacvlanEnabled enables native macvlan interface setup at startup.
-	// When true the binary creates a macvlan interface in the host netns and
-	// moves it into the pod netns before starting the DHCP server.
-	// Requires CAP_NET_ADMIN + CAP_SYS_ADMIN and hostPID=true.
-	MacvlanEnabled bool
-	// MacvlanSourceInterface is the host parent interface for the macvlan.
-	// When empty the host's default-route interface is used.
-	MacvlanSourceInterface string
+	// BroadcastRedirectEnabled attaches the TC eBPF programs that carry DHCP
+	// between the host's physical network and this pod, so a pod on the CNI
+	// network can answer PXE clients that can only broadcast.
+	// Requires CAP_BPF, CAP_NET_ADMIN, CAP_SYS_ADMIN and hostPID=true.
+	BroadcastRedirectEnabled bool
+	// BroadcastRedirectInterface is the host interface DHCP broadcasts arrive
+	// on. When empty the host's default-route interface is used.
+	BroadcastRedirectInterface string
+	// BroadcastRedirectHostNetNS is the path to the host network namespace.
+	// When empty /proc/1/ns/net is used, which needs hostPID and CAP_SYS_PTRACE.
+	BroadcastRedirectHostNetNS string
 }
 
 var KubeIndexesSmee = map[kube.IndexType]kube.Index{
@@ -57,8 +60,9 @@ func RegisterSmeeFlags(fs *Set, sc *SmeeConfig) {
 	fs.Register(DHCPModeFlag, &sc.Config.DHCP.Mode)
 	fs.Register(DHCPBindAddr, &ntip.Addr{Addr: &sc.Config.DHCP.BindAddr})
 	fs.Register(DHCPBindInterface, ffval.NewValueDefault(&sc.Config.DHCP.BindInterface, sc.Config.DHCP.BindInterface))
-	fs.Register(DHCPMacvlanEnabled, ffval.NewValueDefault(&sc.MacvlanEnabled, sc.MacvlanEnabled))
-	fs.Register(DHCPMacvlanSourceInterface, ffval.NewValueDefault(&sc.MacvlanSourceInterface, sc.MacvlanSourceInterface))
+	fs.Register(DHCPBroadcastRedirectEnabled, ffval.NewValueDefault(&sc.BroadcastRedirectEnabled, sc.BroadcastRedirectEnabled))
+	fs.Register(DHCPBroadcastRedirectInterface, ffval.NewValueDefault(&sc.BroadcastRedirectInterface, sc.BroadcastRedirectInterface))
+	fs.Register(DHCPBroadcastRedirectHostNetNS, ffval.NewValueDefault(&sc.BroadcastRedirectHostNetNS, sc.BroadcastRedirectHostNetNS))
 	fs.Register(DHCPIPForPacket, &ntip.Addr{Addr: &sc.Config.DHCP.IPForPacket})
 	fs.Register(DHCPSyslogIP, &ntip.Addr{Addr: &sc.Config.DHCP.SyslogIP})
 	fs.Register(DHCPTftpIP, &ntip.Addr{Addr: &sc.Config.DHCP.TFTPIP})
@@ -296,14 +300,19 @@ var DHCPBindInterface = Config{
 	Usage: "[dhcp] DHCP server bind interface",
 }
 
-var DHCPMacvlanEnabled = Config{
-	Name:  "dhcp-macvlan-enabled",
-	Usage: "[dhcp] create a per-pod layer 2 only macvlan interface at startup (no IP, no routes) and bind the DHCP server to it; requires CAP_NET_ADMIN, CAP_SYS_ADMIN and hostPID=true. Disabling IPv6 on the interface additionally needs a writable /proc/sys (a privileged container); without it a router advertisement on the physical network can add an IPv6 default route to the pod",
+var DHCPBroadcastRedirectEnabled = Config{
+	Name:  "dhcp-broadcast-redirect-enabled",
+	Usage: "[dhcp] carry DHCP between the host's physical network and this pod with TC eBPF programs, so PXE clients that can only broadcast are answered without giving the pod an interface on that network; no host interface is created or changed. Requires Linux 5.10+, CAP_BPF, CAP_NET_ADMIN, CAP_SYS_ADMIN, CAP_SYS_PTRACE and hostPID=true",
 }
 
-var DHCPMacvlanSourceInterface = Config{
-	Name:  "dhcp-macvlan-source-interface",
-	Usage: "[dhcp] host parent interface for the macvlan (empty = auto-detect from host default route)",
+var DHCPBroadcastRedirectInterface = Config{
+	Name:  "dhcp-broadcast-redirect-interface",
+	Usage: "[dhcp] host interface that DHCP broadcasts arrive on (empty = auto-detect from host default route)",
+}
+
+var DHCPBroadcastRedirectHostNetNS = Config{
+	Name:  "dhcp-broadcast-redirect-host-netns",
+	Usage: "[dhcp] path to the host network namespace (empty = /proc/1/ns/net, which needs hostPID and CAP_SYS_PTRACE). Point this at a bind mount of the host namespace to avoid needing either, e.g. `ip netns attach host 1` on the node and a hostPath mount of /run/netns",
 }
 
 var DHCPIPForPacket = Config{

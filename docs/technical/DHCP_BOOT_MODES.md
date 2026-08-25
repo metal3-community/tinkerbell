@@ -41,73 +41,102 @@ This mode is used to disable all DHCP functionality in Tinkerbell. In this mode,
 
 To enable this mode set the CLI flag `--dhcp-enabled=false` or the environment variable `TINKERBELL_DHCP_ENABLED=false`.
 
-## DHCP Proxy Interface Management
+## Receiving broadcast DHCP in a pod
 
-In `proxy` and `auto-proxy` modes, Tinkerbell automatically creates a macvlan interface so it can receive broadcast DHCP packets from the host network. When running multiple replicas, the interface should only be active on the pod that is currently serving the Kubernetes Service (i.e. the Service endpoint leader). Tinkerbell supports three interface management modes:
+A machine being network booted has no address yet, so its DHCPDISCOVER is a
+broadcast: `ff:ff:ff:ff:ff:ff` at layer 2 and `255.255.255.255` at layer 3. A
+pod on a CNI-managed network never sees it. Tinkerbell can bridge that gap
+without giving the pod an interface on the physical network.
 
-| Mode | When to use |
-|---|---|
-| **Lease-watch** | Multi-replica with Cilium L2 announcements (or any LB that uses a Lease for leader selection) |
-| **Leader election** | Multi-replica without an external Lease to follow |
-| **Static** | Single replica, no HA |
+Enable it with `--dhcp-broadcast-redirect-enabled` (environment variable
+`TINKERBELL_DHCP_BROADCAST_REDIRECT_ENABLED=true`), or in the Helm chart with
+`deployment.envs.dhcp.broadcastRedirectEnabled=true`.
 
-### Aligning with Cilium L2 Announcements
+### How it works
 
-When using [Cilium L2 announcements](https://docs.cilium.io/en/stable/network/l2-announcements/) for the Tinkerbell Service, Cilium maintains a Lease object that tracks which node is the current L2 leader. Tinkerbell can watch this Lease and activate the DHCP proxy interface only on the matching node, ensuring the DHCP interface is always co-located with the Service endpoint.
+Two TC eBPF programs are attached at the ingress hooks either side of the pod
+boundary:
 
-Cilium L2 announcement Leases follow the naming convention `cilium-l2announce-<service-namespace>-<service-name>` and are created in the `kube-system` namespace. For example, a Service named `tinkerbell` in the `default` namespace produces the Lease `cilium-l2announce-default-tinkerbell`.
+| Hook | Program | Action |
+|---|---|---|
+| Host's physical interface, ingress | `redirect_to_pod` | Broadcasts to UDP/67 are redirected, untouched, into the pod's veth |
+| Host side of the pod's veth, ingress | `redirect_to_wire` | The DHCP replies the pod broadcasts back are rewritten to come from the host's address and MAC, then sent out of the physical interface |
 
-#### Configuration
+Every other packet is returned with `TC_ACT_OK` and falls through to the CNI's
+own programs, so the pod's normal datapath is untouched. Nothing is created,
+renamed or deleted in either network namespace, which is the difference from the
+macvlan and ipvlan approaches this replaces. The attachments are held open by
+file descriptors, so they disappear when the process does — however it exits —
+and leave nothing behind for the next start to clean up.
 
-Set the following CLI flags or environment variables:
+Requests are deliberately **not** readdressed to the pod on the way in. A client
+that has no address yet sends from `0.0.0.0`, and the kernel accepts that source
+only when the destination is the limited broadcast (see the "Accept zero
+addresses only to limited broadcast" check in `ip_route_input_slow()`).
+Readdressed to the pod's own IP, every DHCPDISCOVER is dropped as a martian
+source, silently: no counter in `/proc/net/snmp` moves, and the drop is visible
+only with `log_martians` enabled. Leaving the packet as a broadcast takes the
+`brd_input` path, which is unconditional local delivery.
 
-```bash
---dhcp-interface-lease-watch-name=cilium-l2announce-default-tinkerbell
---dhcp-interface-lease-watch-namespace=kube-system
---dhcp-interface-node-name=<this-node-name>
+The consequence is that the DHCP server must be bound to `0.0.0.0`, which is the
+default. Setting `--dhcp-bind-addr` to a specific address stops it receiving
+broadcasts.
+
+### Requirements
+
+* Linux 5.10 or later on the node (for `bpf_redirect_peer`).
+* Linux 6.6 or later to order the programs ahead of the CNI's own, using TCX. On
+  older kernels they are attached as classic tc filters, which cannot be placed
+  ahead of an existing filter; Smee logs a warning at startup when that happens.
+* `hostPID: true`, so the host network namespace can be reached through
+  `/proc/1/ns/net`.
+* `CAP_BPF`, `CAP_NET_ADMIN`, `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE`. The Helm
+  chart adds all four when `broadcastRedirectEnabled` is set. `CAP_SYS_PTRACE`
+  is needed only to open `/proc/1/ns/net`, which is another process's
+  namespace: without ptrace access the kernel does not fail the open, it returns
+  the `/proc` symlink instead of the namespace behind it, and the failure
+  surfaces later as an unexplained `EINVAL` from `setns`. Smee detects that case
+  and says so.
+
+  To avoid `hostPID` and `CAP_SYS_PTRACE` entirely, pin the host namespace to a
+  file on each node (`ip netns attach host 1`, which creates `/run/netns/host`),
+  hostPath-mount `/run/netns` into the pod, and set
+  `--dhcp-broadcast-redirect-host-netns` (Helm:
+  `deployment.envs.dhcp.broadcastRedirectHostNetns`) to the mounted path. A
+  bind-mounted namespace file needs no ptrace access to open.
+* A pod whose primary interface is one end of a veth pair, which covers Cilium,
+  Calico, Flannel and every other common CNI. A pod given an ipvlan or macvlan
+  interface directly has no peer to redirect into, and Smee refuses to start
+  rather than attaching programs that would silently drop everything.
+
+### Running more than one replica
+
+The redirect is per-pod and per-node: each pod attaches to its own veth and to
+its own node's physical interface. Use leader election
+(`--dhcp-enable-leader-election`, on by default with the kube backend) so only
+one replica answers, exactly as without the redirect.
+
+Do not run two Smee pods with the redirect enabled **on the same node**. Both
+attach to that node's physical interface, and only whichever is at the head of
+the hook sees the broadcasts, because a redirect consumes the packet rather than
+passing it along — the other pod would never receive DHCP even if it held the
+lease. Smee logs a warning when it finds another redirect already attached.
+Spread replicas across nodes with `topologySpreadConstraints` or pod
+anti-affinity. Briefly overlapping during a rolling update is harmless.
+
+### Observability
+
+Both programs keep counters, logged at startup and again at shutdown:
+
+```
+DHCP broadcast redirect counters  toPodMatched=12 toPodRedirected=12 toWireMatched=6 toWireRedirected=6 toWireError=0 unconfigured=0
 ```
 
-Or equivalently:
-
-```bash
-TINKERBELL_SMEE_DHCP_INTERFACE_LEASE_WATCH_NAME=cilium-l2announce-default-tinkerbell
-TINKERBELL_SMEE_DHCP_INTERFACE_LEASE_WATCH_NAMESPACE=kube-system
-TINKERBELL_SMEE_DHCP_INTERFACE_NODE_NAME=<this-node-name>
-```
-
-The node name is typically injected via the Kubernetes downward API. In a Helm values file or pod spec:
-
-```yaml
-containers:
-- name: tinkerbell
-  env:
-  - name: NODE_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: spec.nodeName
-  - name: TINKERBELL_SMEE_DHCP_INTERFACE_LEASE_WATCH_NAME
-    value: "cilium-l2announce-default-tinkerbell"
-  - name: TINKERBELL_SMEE_DHCP_INTERFACE_LEASE_WATCH_NAMESPACE
-    value: "kube-system"
-  - name: TINKERBELL_SMEE_DHCP_INTERFACE_NODE_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: spec.nodeName
-  securityContext:
-    capabilities:
-      add: ["NET_ADMIN"]
-```
-
-> **Note:** The pod must have `hostPID: true` and `CAP_NET_ADMIN` for macvlan interface creation. When `lease-watch-name` is set it takes precedence over `--dhcp-interface-leader-election-enabled`.
-
-#### How it works
-
-1. Tinkerbell performs a Kubernetes list+watch on the configured Lease object.
-2. When the Lease's `holderIdentity` matches the configured node name, the macvlan interface is created and the DHCP server begins serving.
-3. When the holder changes to a different node (or the Lease is deleted), the interface is torn down and the DHCP server stops.
-4. If the watch connection drops, it reconnects automatically.
-
-This ensures that broadcast DHCP packets are always received by the same pod that Cilium has selected to answer unicast traffic for the Tinkerbell Service.
+`toPodMatched` moving while `toWireMatched` stays at zero means requests are
+arriving but the DHCP server is not answering them. Both at zero means the
+broadcasts are not reaching the interface the programs are attached to; check
+that `--dhcp-broadcast-redirect-interface` names the interface facing the
+provisioning network.
 
 ## Interoperability with other DHCP servers
 

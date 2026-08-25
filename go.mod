@@ -13,6 +13,7 @@ require (
 	github.com/bougou/go-ipmi v0.8.3
 	github.com/ccoveille/go-safecast/v2 v2.0.1
 	github.com/cenkalti/backoff/v5 v5.0.3
+	github.com/cilium/ebpf v0.22.0
 	github.com/containerd/containerd/v2 v2.3.3
 	github.com/containerd/go-cni v1.1.13
 	github.com/containers/image/v5 v5.36.2
@@ -92,7 +93,7 @@ require (
 	connectrpc.com/otelconnect v0.7.2 // indirect
 	cyphar.com/go-pathrs v0.2.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
-	github.com/BurntSushi/toml v1.5.0 // indirect
+	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/JeffAshton/win_pdh v0.0.0-20161109143554-76bb4ee9f0ab // indirect
 	github.com/Jeffail/gabs/v2 v2.7.0 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
@@ -396,6 +397,7 @@ replace (
 tool (
 	github.com/a-h/templ/cmd/templ
 	github.com/bufbuild/buf/cmd/buf
+	github.com/cilium/ebpf/cmd/bpf2go
 	github.com/kisielk/godepgraph
 	golang.org/x/tools/cmd/stringer
 	gotest.tools/gotestsum

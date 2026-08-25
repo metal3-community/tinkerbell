@@ -19,6 +19,7 @@ import (
 	"github.com/tinkerbell/tinkerbell/cmd/tinkerbell/flag"
 	"github.com/tinkerbell/tinkerbell/crd"
 	"github.com/tinkerbell/tinkerbell/pkg/build"
+	"github.com/tinkerbell/tinkerbell/pkg/dhcpredirect"
 	"github.com/tinkerbell/tinkerbell/pkg/otel"
 	"github.com/tinkerbell/tinkerbell/rufio"
 	"github.com/tinkerbell/tinkerbell/secondstar"
@@ -428,24 +429,36 @@ func executeWithOutput(ctx context.Context, cancel context.CancelFunc, args []st
 		ll := ternary((s.LogLevel != 0), s.LogLevel, globals.LogLevel)
 		smeeLog := getLogger(ll).WithName("smee")
 
-		if s.MacvlanEnabled {
-			ifaceName, err := macvlanIfaceName()
+		if s.BroadcastRedirectEnabled {
+			// Two TC eBPF programs carry DHCP across the boundary the CNI puts
+			// between this pod and the physical network. Nothing on either side
+			// is created or reconfigured, and the attachments are held by file
+			// descriptors, so they go away with this process however it exits.
+			redirector, err := dhcpredirect.Setup(smeeLog, dhcpredirect.Config{
+				PhysicalInterface: s.BroadcastRedirectInterface,
+				HostNetNSPath:     s.BroadcastRedirectHostNetNS,
+			})
 			if err != nil {
-				return fmt.Errorf("macvlan interface name: %w", err)
+				return fmt.Errorf("set up the DHCP broadcast redirect: %w", err)
 			}
-			cleanup, err := setupMacvlan(smeeLog, s.MacvlanSourceInterface, ifaceName)
-			if err != nil {
-				return fmt.Errorf("setup macvlan: %w", err)
-			}
-			defer cleanup()
-			s.Config.DHCP.BindInterface = ifaceName
-		} else if s.Config.DHCP.BindInterface == "" {
+			smeeLog.Info("DHCP broadcast redirect active", redirector.Info().LogValues()...)
+			defer func() {
+				if st, serr := redirector.Stats(); serr == nil {
+					smeeLog.Info("DHCP broadcast redirect counters", st.LogValues()...)
+				}
+				if cerr := redirector.Close(); cerr != nil {
+					smeeLog.Error(cerr, "failed to detach the DHCP broadcast redirect")
+				}
+			}()
+		}
+
+		if s.Config.DHCP.BindInterface == "" {
 			// Bind DHCP to the container's primary interface so the kernel has a
 			// valid (non-loopback) source address when sending 255.255.255.255
 			// broadcast replies. Without an explicit interface, cm.IfIndex in the
 			// response may point to an interface with no routable IP, causing
 			// sendmsg to return EINVAL.
-			iface, err := defaultRouteInterface()
+			iface, err := dhcpredirect.DefaultRouteInterface()
 			if err != nil {
 				smeeLog.Error(err, "failed to detect primary container interface for DHCP broadcast; broadcast replies may fail")
 			} else {

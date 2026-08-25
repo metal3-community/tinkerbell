@@ -60,7 +60,7 @@ spec:
             {{- include "tinkerbell.generateEnvVars" .Values.deployment.envs | nindent 12 }}
           {{- end }}
           {{- /* Open env: when using configmap but extra downward-API vars are needed */}}
-          {{- $needsExtraEnv := or .Values.deployment.hostNetwork .Values.deployment.envs.dhcp.macvlanEnabled .Values.deployment.additionalEnvs true }}
+          {{- $needsExtraEnv := or .Values.deployment.hostNetwork .Values.deployment.additionalEnvs true }}
           {{- if and .Values.createConfigmap $needsExtraEnv }}
           env:
           {{- end }}
@@ -69,12 +69,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.hostIP
-          {{- end }}
-          {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
-            - name: MY_POD_UID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.uid
           {{- end }}
           {{- with .Values.deployment.additionalEnvs }}
           {{- toYaml . | nindent 12 }}
@@ -162,22 +156,28 @@ spec:
             successThreshold: {{ .Values.deployment.probes.startup.successThreshold }}
           {{- end }}
           securityContext:
-            {{- if and .Values.deployment.envs.dhcp.macvlanEnabled .Values.deployment.envs.dhcp.macvlanPrivileged }}
-            # Only needed to disable IPv6 on the macvlan, which has no netlink
-            # equivalent and so needs a writable /proc/sys. See dhcp.macvlanPrivileged.
-            privileged: true
-            {{- end }}
             capabilities:
               add:
                 # NET_RAW is required for the DHCP server to send broadcast replies.
                 # DHCP serving is gated by leader election (see dhcp.enableLeaderElection),
                 # so no host network interface management privileges are needed.
                 - NET_RAW
-                {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
-                # NET_ADMIN + SYS_ADMIN are required for native macvlan setup: netlink
-                # link and devconf operations, and setns to enter the host netns.
+                {{- if .Values.deployment.envs.dhcp.broadcastRedirectEnabled }}
+                # The DHCP broadcast redirect loads and attaches TC eBPF programs
+                # (BPF + NET_ADMIN) and enters the host network namespace to attach
+                # them there (SYS_ADMIN, with hostPID below). No host interface is
+                # created or modified. BPF is folded into SYS_ADMIN on kernels
+                # before 5.8 and is listed separately so it stays accurate.
+                - BPF
                 - NET_ADMIN
                 - SYS_ADMIN
+                # Opening /proc/1/ns/net means reading another process's namespace,
+                # which needs ptrace access to it. Without this the open silently
+                # yields the /proc symlink instead of the namespace and the failure
+                # surfaces later as an unexplained EINVAL. It can be dropped by
+                # bind-mounting the host namespace instead; see
+                # dhcp.broadcastRedirectHostNetns.
+                - SYS_PTRACE
                 {{- end }}
           volumeMounts:
           - name: captain-artifacts
@@ -211,7 +211,9 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.deployment.envs.dhcp.macvlanEnabled }}
+      {{- if .Values.deployment.envs.dhcp.broadcastRedirectEnabled }}
+      # The host network namespace is reached through /proc/1/ns/net, which is
+      # only the host's init when the host PID namespace is shared.
       hostPID: true
       {{- end }}
       {{- with .Values.deployment.initContainers }}

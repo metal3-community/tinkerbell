@@ -76,6 +76,19 @@ generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject
 	go generate ./...
 	$(MAKE) format
 
+# The eBPF object and its Go bindings are committed, so an ordinary build needs
+# none of this. Regenerate only after editing pkg/dhcpredirect/bpf/*.c, which
+# needs clang with a BPF target plus the libbpf and kernel uapi headers
+# (Debian/Ubuntu: clang libbpf-dev linux-libc-dev; Fedora: clang libbpf-devel
+# kernel-headers; Arch: clang libbpf linux-api-headers). It is kept out of
+# `make generate` behind the bpfgen build tag so neither CI nor a contributor
+# without a BPF toolchain has to have one.
+BPF2GO_STRIP ?= $(shell command -v llvm-strip || command -v strip)
+.PHONY: generate-bpf
+generate-bpf: ## Recompile the eBPF DHCP redirect and regenerate its Go bindings
+	BPF2GO_STRIP="$(BPF2GO_STRIP)" go generate -tags bpfgen ./pkg/dhcpredirect/...
+	$(MAKE) format
+
 .PHONY: format
 format: $(GOLANGCI_LINT) ## Format the code using go fmt
 	$(GOLANGCI_LINT) fmt ./...

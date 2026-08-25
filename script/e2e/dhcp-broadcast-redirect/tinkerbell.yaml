@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: smee
+  namespace: tink-e2e
+  labels:
+    app: smee
+spec:
+  # The host network namespace is reached through /proc/1/ns/net, which is only
+  # the host's init when the host PID namespace is shared.
+  hostPID: true
+  # Deliberately NOT hostNetwork: the pod sits on the Cilium pod network, with
+  # no interface on the segment the PXE client broadcasts on. Everything that
+  # follows depends on the eBPF redirect to bridge that.
+  hostNetwork: false
+  containers:
+    - name: tinkerbell
+      image: localhost/tinkerbell-e2e:latest
+      imagePullPolicy: Never
+      args:
+        - --backend=file
+        - --backend-file-path=/data/hardware.yaml
+        - --enable-smee=true
+        - --enable-tootles=false
+        - --enable-tink-server=false
+        - --enable-tink-controller=false
+        - --enable-rufio-controller=false
+        - --enable-secondstar=false
+        - --enable-ui=false
+        - --enable-crd-migrations=false
+        - --dhcp-enabled=true
+        - --dhcp-mode=reservation
+        - --dhcp-enable-leader-election=false
+        - --dhcp-broadcast-redirect-enabled=true
+        - --public-ipv4=$(NODE_IP)
+        - --log-level=1
+      env:
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+      securityContext:
+        capabilities:
+          add:
+            # Sending broadcast DHCP replies.
+            - NET_RAW
+            # Loading and attaching the TC eBPF programs.
+            - BPF
+            - NET_ADMIN
+            # setns into the host network namespace to attach them there.
+            - SYS_ADMIN
+            # Reading /proc/1/ns/net, which is another process's namespace.
+            - SYS_PTRACE
+      volumeMounts:
+        - name: hardware
+          mountPath: /data
+  volumes:
+    - name: hardware
+      configMap:
+        name: hardware

@@ -92,44 +92,44 @@ deployment:
       tftpIP: ""
       tftpPort: 69
       # Leader election ensures only a single Smee instance serves DHCP at a time.
-      # This replaces host network interface (macvlan) management and is compatible
-      # with per-pod IPs assigned by CNIs such as Multus macvlan. Requires the kube
-      # backend; ignored for file/none backends.
+      # This needs no host network interface management and is compatible with
+      # per-pod IPs assigned by any CNI. Requires the kube backend; ignored for
+      # file/none backends.
       enableLeaderElection: true
       leaderElectionNamespace: '{{ include "tinkerbell.namespace" . }}'
-      # macvlanEnabled enables native macvlan interface setup inside the tinkerbell
-      # binary (no init container required). The binary creates a per-pod macvlan
-      # interface (mv<13-hex-chars-of-pod-UID>) in the host netns and moves it into
-      # the pod netns before starting the DHCP server.
+      # broadcastRedirectEnabled lets this pod answer PXE clients that can only
+      # broadcast, without giving it an interface on the physical network.
       #
-      # The interface is brought up as a layer 2 receiver only: no IP address and no
-      # routes, so the pod's routing table stays exactly as the CNI left it and all
-      # routed traffic continues to flow through the CNI datapath (Cilium's eBPF
-      # programs on eth0, for example). The DHCP server reaches it via
-      # SO_BINDTODEVICE, which is all the kernel needs to receive limited broadcasts
-      # on an unaddressed interface and to send replies back out of it.
+      # Two TC eBPF programs are attached at the ingress hooks either side of the
+      # pod boundary and move DHCP across it: broadcasts to UDP/67 arriving on the
+      # host's physical interface are redirected into this pod's veth, and the
+      # replies the pod broadcasts back are rewritten to come from the host and
+      # sent out of that interface. Everything else falls through untouched to the
+      # CNI's own programs, so the pod's normal datapath is unchanged.
       #
-      # Requires hostPID=true and CAP_NET_ADMIN + CAP_SYS_ADMIN, both added
-      # automatically when this is true.
-      macvlanEnabled: false
-      # macvlanPrivileged additionally runs the container privileged, which is only
-      # needed to harden the macvlan against IPv6 router advertisements.
+      # Nothing is created, renamed or deleted in either network namespace, which
+      # is the difference from the macvlan and ipvlan approaches this replaces.
+      # The attachments are held open by file descriptors, so they disappear when
+      # the process does, however it exits, and leave nothing to clean up.
       #
-      # The interface is restrained either way: it has no address or routes, IPv6
-      # address generation is off, and the ARP and ICMP redirect settings are applied
-      # over netlink, which needs nothing beyond CAP_NET_ADMIN. Disabling IPv6 on the
-      # interface has no netlink equivalent, so it needs a writable /proc/sys, which
-      # container runtimes provide only to privileged containers.
+      # Requires Linux 5.10 or later, hostPID=true and BPF + NET_ADMIN + SYS_ADMIN
+      # + SYS_PTRACE, all added automatically when this is true. Ordering the
+      # programs ahead of the CNI's own needs Linux 6.6 or later; on older kernels
+      # Smee logs a warning at startup.
       #
-      # Leave this false unless the provisioning network carries IPv6 router
-      # advertisements. Without it, an advertisement on that network can install an
-      # IPv6 default route in the pod that bypasses the CNI datapath, and SLAAC can
-      # configure a global address on the interface. Smee logs a warning at startup
-      # when it cannot apply these settings.
-      macvlanPrivileged: false
-      # macvlanSourceInterface is the host parent interface for the macvlan.
+      # The DHCP server must be bound to 0.0.0.0 (the default): the requests stay
+      # addressed to 255.255.255.255, because a client with no address yet sends
+      # from 0.0.0.0 and the kernel accepts that source only for a broadcast.
+      broadcastRedirectEnabled: false
+      # broadcastRedirectInterface is the host interface DHCP broadcasts arrive on.
       # Leave empty to auto-detect from the host's default route.
-      macvlanSourceInterface: ""
+      broadcastRedirectInterface: ""
+      # broadcastRedirectHostNetns is the path to the host's network namespace.
+      # Leave empty to use /proc/1/ns/net, which is why hostPID and SYS_PTRACE are
+      # needed. Sites that would rather not grant those can pin the namespace on
+      # each node instead (`ip netns attach host 1` creates /run/netns/host),
+      # hostPath-mount /run/netns into the pod, and set this to the mounted path.
+      broadcastRedirectHostNetns: ""
     smee:
       logLevel: 0
     ipxe:

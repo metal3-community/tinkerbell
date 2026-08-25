@@ -1,0 +1,15 @@
+# A single node cluster with no CNI and no kube-proxy, so Cilium can install its
+# own datapath. That is the point of the exercise: the DHCP redirect has to
+# coexist with a CNI that has its own TC eBPF programs on the same hooks.
+#
+# run.sh puts this cluster on a docker network of its own rather than the shared
+# "kind" one. The test turns on whether a DHCP broadcast is answered, and every
+# other kind cluster on the host would otherwise be on the same layer 2 segment,
+# free to answer first.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: none
+nodes:
+  - role: control-plane

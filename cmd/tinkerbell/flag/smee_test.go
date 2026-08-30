@@ -2,6 +2,7 @@ package flag
 
 import (
 	"net/netip"
+	"net/url"
 	"testing"
 
 	"github.com/tinkerbell/tinkerbell/smee"
@@ -151,4 +152,60 @@ func TestSmeeConfig_Convert_TinkServerAddrPort(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The OSIE images are served by this binary, so their download URL is
+// derivable from the same public address as everything else rather than being
+// a thing an operator has to remember to set and keep in step.
+func TestConvertDerivesOSIEURL(t *testing.T) {
+	newConfig := func() *SmeeConfig {
+		sc := &SmeeConfig{Config: smee.NewConfig(smee.Config{})}
+		sc.Config.OSIE.Enabled = true
+		sc.Config.OSIE.URLPrefix = "/images/"
+		return sc
+	}
+
+	t.Run("derived from the public IP", func(t *testing.T) {
+		sc := newConfig()
+		var proxies []netip.Prefix
+		sc.Convert(&proxies, netip.MustParseAddr("10.1.1.111"), netip.Addr{}, 7080)
+
+		if got, want := sc.Config.IPXE.HTTPScriptServer.OSIEURL.String(), "http://10.1.1.111:7080"; got != want {
+			t.Errorf("OSIEURL = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an explicit URL is left alone", func(t *testing.T) {
+		sc := newConfig()
+		sc.Config.IPXE.HTTPScriptServer.OSIEURL = &url.URL{Scheme: "https", Host: "artifacts.example.com", Path: "/hook/"}
+		var proxies []netip.Prefix
+		sc.Convert(&proxies, netip.MustParseAddr("10.1.1.111"), netip.Addr{}, 7080)
+
+		if got, want := sc.Config.IPXE.HTTPScriptServer.OSIEURL.String(), "https://artifacts.example.com/hook/"; got != want {
+			t.Errorf("OSIEURL = %q, want the configured URL %q", got, want)
+		}
+	})
+
+	t.Run("not derived when this binary is not serving the images", func(t *testing.T) {
+		sc := newConfig()
+		sc.Config.OSIE.Enabled = false
+		var proxies []netip.Prefix
+		sc.Convert(&proxies, netip.MustParseAddr("10.1.1.111"), netip.Addr{}, 7080)
+
+		if got := sc.Config.IPXE.HTTPScriptServer.OSIEURL.String(); got != "" {
+			t.Errorf("OSIEURL = %q, want it left empty when OSIE is disabled", got)
+		}
+	})
+
+	// "http://:7080/images/" would be worse than nothing: it looks configured
+	// and fails at boot time on the machine rather than at startup here.
+	t.Run("no host means no URL", func(t *testing.T) {
+		sc := newConfig()
+		var proxies []netip.Prefix
+		sc.Convert(&proxies, netip.Addr{}, netip.Addr{}, 7080)
+
+		if got := sc.Config.IPXE.HTTPScriptServer.OSIEURL.String(); got != "" {
+			t.Errorf("OSIEURL = %q, want it left empty when no public address is known", got)
+		}
+	})
 }

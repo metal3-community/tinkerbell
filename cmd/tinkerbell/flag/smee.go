@@ -214,6 +214,29 @@ func (s *SmeeConfig) Convert(trustedProxies *[]netip.Prefix, publicIP netip.Addr
 		return addr
 	}()
 
+	// The OSIE images are served by this binary's own HTTP server whenever the
+	// OSIE service is enabled, so the download URL is the same host and port as
+	// the iPXE script URL derived just above. Deriving it means one less thing
+	// to configure by hand and one less way for the two to disagree; a URL
+	// given on the command line still wins, which is how an external artifact
+	// server is pointed at.
+	//
+	// Only the scheme and host are set here. The path comes from the OSIE URL
+	// prefix and is applied by Config.osieURL at use time.
+	if s.Config.OSIE.Enabled && s.Config.IPXE.HTTPScriptServer.OSIEURL != nil &&
+		s.Config.IPXE.HTTPScriptServer.OSIEURL.Host == "" {
+		// An empty hostname means neither publicIP nor a flag supplied one, and
+		// a URL of "http://:7080/images/" is worse than no URL at all.
+		if host, _ := splitHostPort(s.Config.DHCP.IPXEHTTPScript.URL.Host); host != "" {
+			scheme := s.Config.DHCP.IPXEHTTPScript.URL.Scheme
+			if scheme == "" {
+				scheme = "http"
+			}
+			s.Config.IPXE.HTTPScriptServer.OSIEURL.Scheme = scheme
+			s.Config.IPXE.HTTPScriptServer.OSIEURL.Host = s.Config.DHCP.IPXEHTTPScript.URL.Host
+		}
+	}
+
 	// Service-specific bind addresses take precedence over the global bind address.
 	if bindAddr.IsValid() {
 		if !s.Config.Syslog.BindAddr.IsValid() {

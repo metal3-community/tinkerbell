@@ -43,11 +43,12 @@ func TestStatCountMatchesTheCSource(t *testing.T) {
 		"STAT_TO_WIRE_REDIRECTED": statToWireRedirected,
 		"STAT_TO_WIRE_ERROR":      statToWireError,
 		"STAT_UNCONFIGURED":       statUnconfigured,
+		"STAT_OTHER_SERVER_REPLY": statOtherServerReply,
 	}
 	for i, name := range []string{
 		"STAT_TO_POD_MATCHED", "STAT_TO_POD_REDIRECTED",
 		"STAT_TO_WIRE_MATCHED", "STAT_TO_WIRE_REDIRECTED", "STAT_TO_WIRE_ERROR",
-		"STAT_UNCONFIGURED",
+		"STAT_UNCONFIGURED", "STAT_OTHER_SERVER_REPLY",
 	} {
 		if want[name] != i {
 			t.Errorf("%s = %d, want %d", name, want[name], i)

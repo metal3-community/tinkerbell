@@ -21,26 +21,32 @@ import (
 func main() {
 	iface := flag.String("interface", "eth0", "interface to broadcast from")
 	timeout := flag.Duration("timeout", 10*time.Second, "how long to wait for each response")
-	retries := flag.Int("retries", 3, "how many times to retransmit")
+	// nclient4 counts attempts, not retransmissions: a value of zero sends
+	// nothing at all and then reports that no response arrived, which is a
+	// remarkably confusing way to spend eight seconds.
+	attempts := flag.Int("attempts", 3, "how many times to send before giving up (minimum 1)")
 	flag.Parse()
 
-	if err := run(*iface, *timeout, *retries); err != nil {
+	if *attempts < 1 {
+		*attempts = 1
+	}
+	if err := run(*iface, *timeout, *attempts); err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(iface string, timeout time.Duration, retries int) error {
+func run(iface string, timeout time.Duration, attempts int) error {
 	client, err := nclient4.New(iface,
 		nclient4.WithTimeout(timeout),
-		nclient4.WithRetry(retries),
+		nclient4.WithRetry(attempts),
 	)
 	if err != nil {
 		return fmt.Errorf("open a raw DHCP client on %s: %w", iface, err)
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Duration(retries+1)*2)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Duration(attempts+1)*2)
 	defer cancel()
 
 	offer, err := client.DiscoverOffer(ctx)

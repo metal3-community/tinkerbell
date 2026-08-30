@@ -131,7 +131,7 @@ log "Smee pod IP ${POD_IP} (node ${HOST_IP}) — no interface on the ${CLIENT_MA
 log "broadcasting a DHCPDISCOVER from a container on the node's segment"
 set +e
 OUTPUT="$(docker run --rm --network "${NETWORK}" --mac-address "${CLIENT_MAC}" \
-  --cap-add NET_RAW --cap-add NET_ADMIN "${PROBE_IMAGE}" -interface eth0 -timeout 8s -retries 3 2>&1)"
+  --cap-add NET_RAW --cap-add NET_ADMIN "${PROBE_IMAGE}" -interface eth0 -timeout 8s -attempts 3 2>&1)"
 PROBE_STATUS=$?
 set -e
 echo "${OUTPUT}"

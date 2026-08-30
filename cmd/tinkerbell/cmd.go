@@ -36,6 +36,11 @@ import (
 	controllerruntime "sigs.k8s.io/controller-runtime"
 )
 
+// redirectCounterInterval is how often the DHCP broadcast redirect's counters
+// are checked. Nothing is logged unless one of them moved, so this is the
+// resolution of the report rather than its frequency.
+const redirectCounterInterval = 30 * time.Second
+
 var (
 	embeddedFlagSet                      *ff.FlagSet
 	embeddedApiserverExecute             func(context.Context, logr.Logger) error
@@ -442,6 +447,9 @@ func executeWithOutput(ctx context.Context, cancel context.CancelFunc, args []st
 				return fmt.Errorf("set up the DHCP broadcast redirect: %w", err)
 			}
 			smeeLog.Info("DHCP broadcast redirect active", redirector.Info().LogValues()...)
+			// Reports only when a counter moves, so a quiet network stays quiet
+			// and a machine trying to boot leaves a trail.
+			go redirector.LogCounters(ctx, redirectCounterInterval)
 			defer func() {
 				if st, serr := redirector.Stats(); serr == nil {
 					smeeLog.Info("DHCP broadcast redirect counters", st.LogValues()...)

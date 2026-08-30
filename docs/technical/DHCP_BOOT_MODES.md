@@ -124,19 +124,56 @@ lease. Smee logs a warning when it finds another redirect already attached.
 Spread replicas across nodes with `topologySpreadConstraints` or pod
 anti-affinity. Briefly overlapping during a rolling update is harmless.
 
+### What the redirect does not carry
+
+Only replies addressed to `255.255.255.255` are carried back out. Smee
+broadcasts its reply when the request came from `0.0.0.0`, which covers every
+client that is still acquiring an address — the whole PXE case. It replies
+**unicast** in two situations, and those replies are not carried:
+
+* the request set `giaddr`, i.e. it came through a DHCP relay, so the reply goes
+  to the relay;
+* the client already held an address and sent from it.
+
+A unicast reply falls through to the CNI instead, which on a typical node
+masquerades it — rewriting the source port, so a client that does receive it
+discards it as not coming from port 67. Relayed DHCP therefore needs the ordinary
+routed path (a Service reachable from the relay), not this redirect.
+
 ### Observability
 
-Both programs keep counters, logged at startup and again at shutdown:
+The programs keep counters. They are logged at startup, at shutdown, and
+whenever one of them moves — a quiet network logs nothing, and a machine trying
+to boot leaves a trail:
 
 ```
-DHCP broadcast redirect counters  toPodMatched=12 toPodRedirected=12 toWireMatched=6 toWireRedirected=6 toWireError=0 unconfigured=0
+DHCP broadcast redirect counters  toPodMatched=12 toPodRedirected=12
+  toWireMatched=6 toWireRedirected=6 toWireError=0 unconfigured=0
+  otherServerReplies=4
 ```
 
-`toPodMatched` moving while `toWireMatched` stays at zero means requests are
-arriving but the DHCP server is not answering them. Both at zero means the
-broadcasts are not reaching the interface the programs are attached to; check
-that `--dhcp-broadcast-redirect-interface` names the interface facing the
-provisioning network.
+Read them in this order:
+
+| Signature | Meaning |
+|---|---|
+| `toPodMatched` = 0 | Broadcasts are not reaching the interface the programs are on. Check `--dhcp-broadcast-redirect-interface`. |
+| `toPodMatched` > 0, `toWireMatched` = 0 | Requests arrive but no reply is being carried back. Either Smee is not answering — look for `sent DHCP response` / `Sent ProxyDHCP response` in its log — or it is answering unicast, which is not carried (see above). |
+| `toWireRedirected` > 0, nothing on the segment | The reply was handed to the physical interface and lost after that: the CNI's egress program, a VLAN mismatch, or the switch. |
+| `otherServerReplies` = 0 | **No other DHCP server is answering on this segment.** |
+
+That last one is the one to check first in `proxy` and `auto-proxy` mode. In
+those modes Smee supplies boot information only — its reply carries no address,
+by design — so a client also needs an address from a real DHCP server before it
+can act on anything Smee said. `otherServerReplies` counts DHCP replies seen on
+the segment that this pod did not send, which is the only view a pod with no
+interface there gets of the rest of it. If it stays at zero while a machine is
+trying to boot, the client is not being offered an address and it will retry its
+DHCPDISCOVER until it gives up, no matter how well the redirect is working.
+
+The corresponding signature in Smee's own log is a client that only ever sends
+`DISCOVER`, always with the same `xid`, and never a `REQUEST`: Smee answers a
+REQUEST with an ACK, so a run with no `messageType: ACK` in it is a client that
+never got far enough to select an offer.
 
 ## Interoperability with other DHCP servers
 

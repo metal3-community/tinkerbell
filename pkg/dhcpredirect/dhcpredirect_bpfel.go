@@ -15,7 +15,6 @@ import (
 
 type dhcpRedirectDhcpConfig struct {
 	_           structs.HostLayout
-	PodIp       uint32
 	HostIp      uint32
 	PodIfindex  uint32
 	PhysIfindex uint32
@@ -90,7 +89,8 @@ type dhcpRedirectMapSpecs struct {
 // dhcpRedirectVariableSpecs contains global variables before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
-type dhcpRedirectVariableSpecs struct{}
+type dhcpRedirectVariableSpecs struct {
+}
 
 // dhcpRedirectObjects contains all objects after they have been loaded into the kernel.
 //
@@ -126,7 +126,8 @@ func (m *dhcpRedirectMaps) Close() error {
 // dhcpRedirectVariables contains all global variables after they have been loaded into the kernel.
 //
 // It can be passed to loadDhcpRedirectObjects or ebpf.CollectionSpec.LoadAndAssign.
-type dhcpRedirectVariables struct{}
+type dhcpRedirectVariables struct {
+}
 
 // dhcpRedirectPrograms contains all programs after they have been loaded into the kernel.
 //

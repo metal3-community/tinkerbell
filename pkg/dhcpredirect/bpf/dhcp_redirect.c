@@ -69,9 +69,6 @@ enum {
  * phys_ifindex of zero means "not configured yet" and disables the program
  * that needs it. */
 struct dhcp_config {
-	/* Address of the pod's interface, in network byte order. Used to
-	 * recognise the pod's own DHCP replies on the way out. */
-	__be32 pod_ip;
 	/* Primary address of the physical interface, in network byte order.
 	 * Outbound replies are rewritten to come from it. Zero leaves the
 	 * source address alone. */
@@ -104,7 +101,10 @@ enum {
 	STAT_TO_WIRE_REDIRECTED = 3,
 	STAT_TO_WIRE_ERROR = 4,
 	STAT_UNCONFIGURED = 5,
-	STAT__MAX = 6,
+	/* DHCP replies from some other server on the segment. Counted and
+	 * otherwise left alone; see redirect_to_pod. */
+	STAT_OTHER_SERVER_REPLY = 6,
+	STAT__MAX = 7,
 };
 
 struct {
@@ -179,7 +179,15 @@ static __always_inline int parse_udp(struct __sk_buff *skb, struct udp_frame *ou
 	if (ip->frag_off & bpf_htons(0x1fff))
 		return -1;
 
-	__u32 ihl = (__u32)ip->ihl * 4;
+	/* The low nibble of the first header byte is the IHL. Read it directly
+	 * rather than through struct iphdr's bitfields: which of version and ihl
+	 * comes first depends on __LITTLE_ENDIAN_BITFIELD, and that is defined by
+	 * the build host's asm/byteorder.h rather than by the target we are
+	 * compiling for. Cross compiling the big-endian object on a little-endian
+	 * host therefore lays the bitfields out the wrong way round, and ihl reads
+	 * back as the version -- 4, which fails the length check below and makes
+	 * the program quietly pass every packet. */
+	__u32 ihl = (__u32)(*(__u8 *)ip & 0x0f) * 4;
 	if (ihl < sizeof(struct iphdr) || ihl > 60)
 		return -1;
 
@@ -262,9 +270,23 @@ int redirect_to_pod(struct __sk_buff *skb)
 
 	if (parse_udp(skb, &frame) < 0)
 		return TC_ACT_OK;
-	if (frame.dport != bpf_htons(DHCP_SERVER_PORT))
-		return TC_ACT_OK;
 	if (frame.daddr != IPV4_LIMITED_BROADCAST)
+		return TC_ACT_OK;
+
+	/* A DHCP server's broadcast reply, from something else on the segment:
+	 * our own replies leave by the egress side and never appear here. It is
+	 * passed straight through -- it is not ours to touch -- but it is
+	 * counted, because from inside a pod with no interface on this segment
+	 * there is otherwise no way to tell whether anything else out there is
+	 * answering at all. In proxy mode that is the difference between "the
+	 * real DHCP server is silent" and "our replies are not getting out". */
+	if (frame.sport == bpf_htons(DHCP_SERVER_PORT) &&
+	    frame.dport == bpf_htons(DHCP_CLIENT_PORT)) {
+		count(STAT_OTHER_SERVER_REPLY);
+		return TC_ACT_OK;
+	}
+
+	if (frame.dport != bpf_htons(DHCP_SERVER_PORT))
 		return TC_ACT_OK;
 
 	count(STAT_TO_POD_MATCHED);
@@ -292,6 +314,19 @@ int redirect_to_pod(struct __sk_buff *skb)
  * is meaningless on the physical segment and would be dropped on the way out.
  * Rewrite it to come from the host, at both layer 2 and layer 3, and send it
  * out of the physical interface.
+ *
+ * Note what is deliberately not checked: which address the pod sent from. This
+ * program is attached to one pod's veth, so everything reaching it comes from
+ * that pod, and a UDP datagram from port 67 to the limited broadcast is a DHCP
+ * server's reply by definition -- there is nothing else it can be. An earlier
+ * version also required the source to equal the address the Go side had read
+ * off the pod's interface, which looked like a cheap safety check and was in
+ * fact a silent failure waiting to happen: the two sides pick an address by
+ * different rules. The Go side takes the first globally scoped address; the
+ * kernel, in inet_select_addr(), takes the first address of any scope up to
+ * link. A pod that also carries an IPv4 link-local address ahead of its
+ * routable one sends replies from an address the check then rejected, and
+ * every reply was dropped here with nothing to show for it.
  */
 SEC("tc")
 int redirect_to_wire(struct __sk_buff *skb)
@@ -313,10 +348,6 @@ int redirect_to_wire(struct __sk_buff *skb)
 		count(STAT_UNCONFIGURED);
 		return TC_ACT_OK;
 	}
-	/* Only the pod's own DHCP replies are carried out. Anything else
-	 * broadcasting from this veth is not ours to move. */
-	if (cfg->pod_ip == 0 || frame.saddr != cfg->pod_ip)
-		return TC_ACT_OK;
 
 	count(STAT_TO_WIRE_MATCHED);
 

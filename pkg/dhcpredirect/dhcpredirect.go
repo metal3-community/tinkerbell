@@ -3,11 +3,13 @@
 package dhcpredirect
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"runtime"
+	"time"
 
 	"github.com/ccoveille/go-safecast/v2"
 	"github.com/cilium/ebpf"
@@ -32,6 +34,7 @@ const (
 	statToWireRedirected
 	statToWireError
 	statUnconfigured
+	statOtherServerReply
 	statCount
 )
 
@@ -250,12 +253,14 @@ func resolvePod(ifname string, info *Info) error {
 			ifname, podLink.Type())
 	}
 
+	// Reported for logging only. The datapath deliberately does not care which
+	// address the pod replies from; see redirect_to_wire in the C source.
 	addr, err := primaryIPv4(podLink)
 	if err != nil {
 		return err
 	}
 	if !addr.IsValid() {
-		return fmt.Errorf("pod interface %q has no IPv4 address to redirect DHCP to", ifname)
+		return fmt.Errorf("pod interface %q has no IPv4 address, so nothing in this pod can serve DHCP", ifname)
 	}
 
 	info.PodInterface = ifname
@@ -321,7 +326,6 @@ func (r *Redirector) configure(info Info) error {
 	}
 
 	cfg := dhcpRedirectDhcpConfig{
-		PodIp:       wireOrderFromAddr(info.PodAddr),
 		HostIp:      wireOrderFromAddr(info.PhysicalAddr),
 		PodIfindex:  peerIndex,
 		PhysIfindex: physIndex,
@@ -510,13 +514,51 @@ func (r *Redirector) Stats() (Stats, error) {
 	}
 
 	return Stats{
-		ToPodMatched:     counters[statToPodMatched],
-		ToPodRedirected:  counters[statToPodRedirected],
-		ToWireMatched:    counters[statToWireMatched],
-		ToWireRedirected: counters[statToWireRedirected],
-		ToWireError:      counters[statToWireError],
-		Unconfigured:     counters[statUnconfigured],
+		ToPodMatched:       counters[statToPodMatched],
+		ToPodRedirected:    counters[statToPodRedirected],
+		ToWireMatched:      counters[statToWireMatched],
+		ToWireRedirected:   counters[statToWireRedirected],
+		ToWireError:        counters[statToWireError],
+		Unconfigured:       counters[statUnconfigured],
+		OtherServerReplies: counters[statOtherServerReply],
 	}, nil
+}
+
+// LogCounters logs the packet counters whenever they change, until ctx is
+// done, and once more on the way out.
+//
+// Quiet by design: a run with no DHCP on the network logs nothing at all, and a
+// machine booting produces a line. That matters because the counters are the
+// only instrument for the failure this package can have — replies that are
+// generated but never reach the wire — and needing to stop the process to read
+// them is no use while a machine is trying to boot.
+func (r *Redirector) LogCounters(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	var last Stats
+	report := func() {
+		current, err := r.Stats()
+		if err != nil {
+			r.log.Error(err, "failed to read the DHCP redirect counters")
+			return
+		}
+		if current == last {
+			return
+		}
+		last = current
+		r.log.Info("DHCP broadcast redirect counters", current.LogValues()...)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			report()
+			return
+		case <-ticker.C:
+			report()
+		}
+	}
 }
 
 // Close detaches both programs and unloads them. It is safe to call more than

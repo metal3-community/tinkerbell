@@ -3,8 +3,10 @@
 package dhcpredirect
 
 import (
+	"context"
 	"errors"
 	"runtime"
+	"time"
 
 	"github.com/go-logr/logr"
 )
@@ -26,6 +28,9 @@ func (r *Redirector) Close() error { return nil }
 
 // Info is empty on this platform.
 func (r *Redirector) Info() Info { return Info{} }
+
+// LogCounters is a no-op on this platform.
+func (r *Redirector) LogCounters(context.Context, time.Duration) {}
 
 // Stats always fails on this platform.
 func (r *Redirector) Stats() (Stats, error) { return Stats{}, errNotLinux }

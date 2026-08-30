@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/funcr"
@@ -50,7 +51,9 @@ const (
 	podIface  = "eth0"
 	podCIDR   = "10.244.0.5/24"
 	podGW     = "10.244.0.1"
-	cliIface  = "cl0"
+	// A link scoped address for the source-selection case; see topoConfig.
+	podLinkLocalCIDR = "169.254.1.5/16"
+	cliIface         = "cl0"
 
 	readTimeout = 5 * time.Second
 )
@@ -113,8 +116,7 @@ func TestRedirectCarriesDHCPBothWays(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build DHCPDISCOVER: %v", err)
 			}
-			frame := encodeFrame(top.cliMAC, broadcastMAC, netip.IPv4Unspecified(), limitedBroadcast,
-				68, 67, discover.ToBytes(), tt.udpChecksum)
+			frame := encodeFrame(top.cliMAC, broadcastMAC, netip.IPv4Unspecified(), limitedBroadcast, discover.ToBytes(), tt.udpChecksum)
 
 			if err := client.send(frame); err != nil {
 				t.Fatalf("send DHCPDISCOVER: %v", err)
@@ -152,6 +154,18 @@ func TestRedirectCarriesDHCPBothWays(t *testing.T) {
 			if reply.srcMAC.String() != top.physMAC.String() {
 				t.Errorf("offer arrived from MAC %v, want the host interface's %v; the pod's MAC leaked onto the segment", reply.srcMAC, top.physMAC)
 			}
+			// Rewriting the source address invalidates both checksums, and a
+			// client that verifies them drops a reply that was repaired wrongly
+			// without a word. EDK2's UDP driver verifies them.
+			if !reply.ipChecksumOK {
+				t.Errorf("the offer's IPv4 header checksum is wrong")
+			}
+			if !reply.udpChecksumOK {
+				t.Errorf("the offer's UDP checksum is wrong (field %#04x)", reply.udpChecksum)
+			}
+			if reply.udpChecksum == 0 {
+				t.Errorf("the offer carried no UDP checksum; the pod's kernel always writes one, so it was lost in transit")
+			}
 
 			after := stats(t, redirector)
 			assertCounted(t, "ToPodMatched", before.ToPodMatched, after.ToPodMatched)
@@ -166,6 +180,206 @@ func TestRedirectCarriesDHCPBothWays(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOutboundChecksumsWithPodSoftwareChecksums covers the other half of the
+// checksum repair.
+//
+// The pod's kernel normally defers the checksum to hardware, so the eBPF
+// program adjusts a partially computed value; that is what the main test
+// exercises. With offload off the kernel finishes the checksum before the
+// packet ever reaches the program, and the repair takes a different branch of
+// bpf_l4_csum_replace. Both branches have to produce something a client will
+// accept.
+func TestOutboundChecksumsWithPodSoftwareChecksums(t *testing.T) {
+	requirePrivileged(t)
+
+	top := buildTopology(t, withoutPodTxOffload())
+	redirector := startRedirect(t, top)
+	startDHCPServer(t, top)
+
+	client := openClient(t, top)
+	discover, err := dhcpv4.NewDiscovery(top.cliMAC)
+	if err != nil {
+		t.Fatalf("build DHCPDISCOVER: %v", err)
+	}
+	if err := client.send(encodeFrame(top.cliMAC, broadcastMAC, netip.IPv4Unspecified(), limitedBroadcast, discover.ToBytes(), true)); err != nil {
+		t.Fatalf("send DHCPDISCOVER: %v", err)
+	}
+
+	reply, err := client.awaitReply(discover.TransactionID)
+	if err != nil {
+		t.Fatalf("client never received the offer: %v; counters: %+v", err, stats(t, redirector))
+	}
+	if !reply.ipChecksumOK {
+		t.Errorf("the offer's IPv4 header checksum is wrong")
+	}
+	if !reply.udpChecksumOK {
+		t.Errorf("the offer's UDP checksum is wrong (field %#04x)", reply.udpChecksum)
+	}
+	if reply.srcIP != top.physAddr {
+		t.Errorf("offer arrived from %v, want %v", reply.srcIP, top.physAddr)
+	}
+}
+
+// TestRedirectDoesNotCarryUnicastReplies pins a limit of the design rather than
+// a bug in it, because the limit is invisible from outside.
+//
+// The outbound program only carries replies addressed to 255.255.255.255. Smee
+// replies to the broadcast address only when the request came from 0.0.0.0; a
+// client that already holds an address, or a relay that set giaddr, gets a
+// unicast reply instead. That reply is not carried, falls through to the CNI,
+// and on a real node is masqueraded — which rewrites the source port, so even
+// if it arrives the client discards it as not being from port 67.
+func TestRedirectDoesNotCarryUnicastReplies(t *testing.T) {
+	requirePrivileged(t)
+
+	top := buildTopology(t)
+	redirector := startRedirect(t, top)
+	server := startDHCPServer(t, top)
+
+	before := stats(t, redirector)
+	client := openClient(t, top)
+	discover, err := dhcpv4.NewDiscovery(top.cliMAC)
+	if err != nil {
+		t.Fatalf("build DHCPDISCOVER: %v", err)
+	}
+	// A source address of its own is the whole difference: Smee then answers
+	// the peer directly instead of broadcasting.
+	held := netip.MustParseAddr("192.0.2.77")
+	if err := client.send(encodeFrame(top.cliMAC, broadcastMAC, held, limitedBroadcast, discover.ToBytes(), true)); err != nil {
+		t.Fatalf("send DHCPDISCOVER: %v", err)
+	}
+
+	select {
+	case <-server.requests:
+	case <-time.After(readTimeout):
+		t.Fatalf("the request itself was not delivered; counters: %+v", stats(t, redirector))
+	}
+
+	// Give the reply every chance to appear before concluding it did not.
+	_, replyErr := client.awaitReply(discover.TransactionID)
+	after := stats(t, redirector)
+
+	assertCounted(t, "ToPodMatched", before.ToPodMatched, after.ToPodMatched)
+	if after.ToWireMatched != before.ToWireMatched {
+		t.Errorf("the outbound program carried a unicast reply (%d -> %d); if that is now intended, "+
+			"this test is what should change", before.ToWireMatched, after.ToWireMatched)
+	}
+	t.Logf("unicast reply reached the client: %v", replyErr == nil)
+}
+
+// TestRedirectCarriesRepliesFromAnyPodAddress is the regression test for a
+// silent failure that looked exactly like the redirect not working at all:
+// requests arrived, replies vanished, and no counter or log said why.
+//
+// The outbound program used to require the reply's source to equal an address
+// the Go side had read off the pod's interface. The two sides choose by
+// different rules — the Go side takes the first globally scoped address, the
+// kernel's inet_select_addr() takes the first address of any scope up to link —
+// so a pod that also carries an IPv4 link-local address ahead of its routable
+// one replies from an address the check rejected, and every reply was dropped.
+// The check is gone; this pins that it stays gone.
+func TestRedirectCarriesRepliesFromAnyPodAddress(t *testing.T) {
+	requirePrivileged(t)
+
+	top := buildTopology(t, withLinkScopedPodAddress())
+	redirector := startRedirect(t, top)
+	server := startDHCPServer(t, top)
+
+	before := stats(t, redirector)
+	client := openClient(t, top)
+	discover, err := dhcpv4.NewDiscovery(top.cliMAC)
+	if err != nil {
+		t.Fatalf("build DHCPDISCOVER: %v", err)
+	}
+	if err := client.send(encodeFrame(top.cliMAC, broadcastMAC, netip.IPv4Unspecified(), limitedBroadcast, discover.ToBytes(), true)); err != nil {
+		t.Fatalf("send DHCPDISCOVER: %v", err)
+	}
+
+	select {
+	case <-server.requests:
+	case <-time.After(readTimeout):
+		t.Fatalf("the request was not delivered; counters: %+v", stats(t, redirector))
+	}
+
+	reply, replyErr := client.awaitReply(discover.TransactionID)
+	after := stats(t, redirector)
+	t.Logf("Setup recorded podAddr=%v; counters %+v", redirector.Info().PodAddr, after)
+
+	if after.ToWireMatched == before.ToWireMatched {
+		t.Fatalf("the reply was not carried; the pod sourced it from an address other than the %v "+
+			"Setup recorded, and something is filtering on that again", redirector.Info().PodAddr)
+	}
+	if replyErr != nil {
+		t.Fatalf("client never received the offer: %v", replyErr)
+	}
+	if reply.srcIP != top.physAddr {
+		t.Errorf("offer arrived from %v, want %v", reply.srcIP, top.physAddr)
+	}
+}
+
+// TestOtherServerRepliesAreSeenAndNotTouched covers the counter that exists
+// purely to answer a question a pod otherwise cannot: is anything else on this
+// segment answering DHCP at all?
+//
+// In proxy mode Smee supplies boot information and a separate DHCP server
+// supplies the address, so a client that never gets an address never boots no
+// matter how well the redirect works. From inside a pod with no interface on
+// the segment, this counter is the only way to tell the two apart.
+func TestOtherServerRepliesAreSeenAndNotTouched(t *testing.T) {
+	requirePrivileged(t)
+
+	top := buildTopology(t)
+	redirector := startRedirect(t, top)
+	server := startDHCPServer(t, top)
+
+	before := stats(t, redirector)
+
+	// Something else on the segment answering a client: a broadcast reply
+	// from a DHCP server that is not us.
+	offer, err := dhcpv4.NewReplyFromRequest(mustDiscover(t, top.cliMAC),
+		dhcpv4.WithMessageType(dhcpv4.MessageTypeOffer),
+		dhcpv4.WithYourIP(net.IPv4(192, 0, 2, 50)))
+	if err != nil {
+		t.Fatalf("build the other server's offer: %v", err)
+	}
+	client := openClient(t, top)
+	if err := client.send(encodeServerFrame(top.cliMAC, netip.MustParseAddr("192.0.2.9"), offer.ToBytes())); err != nil {
+		t.Fatalf("send the other server's offer: %v", err)
+	}
+
+	// The counter is read after a round trip through the datapath, which the
+	// pod's own exchange provides.
+	discover := mustDiscover(t, top.cliMAC)
+	if err := client.send(encodeFrame(top.cliMAC, broadcastMAC, netip.IPv4Unspecified(), limitedBroadcast,
+		discover.ToBytes(), true)); err != nil {
+		t.Fatalf("send DHCPDISCOVER: %v", err)
+	}
+	select {
+	case <-server.requests:
+	case <-time.After(readTimeout):
+		t.Fatalf("the request was not delivered; counters: %+v", stats(t, redirector))
+	}
+
+	after := stats(t, redirector)
+	assertCounted(t, "OtherServerReplies", before.OtherServerReplies, after.OtherServerReplies)
+
+	// Seeing it must not mean acting on it: another server's reply belongs to
+	// the segment, not to us, and redirecting it into the pod would be wrong.
+	if after.ToPodRedirected-before.ToPodRedirected != 1 {
+		t.Errorf("ToPodRedirected advanced by %d, want 1: something other than the request was redirected",
+			after.ToPodRedirected-before.ToPodRedirected)
+	}
+}
+
+func mustDiscover(t *testing.T, mac net.HardwareAddr) *dhcpv4.DHCPv4 {
+	t.Helper()
+	d, err := dhcpv4.NewDiscovery(mac)
+	if err != nil {
+		t.Fatalf("build DHCPDISCOVER: %v", err)
+	}
+	return d
 }
 
 // TestSetupRefusesTheHostNetworkNamespace covers the misconfiguration that
@@ -280,8 +494,30 @@ func TestSetupRefusesANonVethPodInterface(t *testing.T) {
 
 // --- topology ---------------------------------------------------------------
 
-func buildTopology(t *testing.T) *topology {
+// topoConfig varies the parts of the topology the investigation needs to poke
+// at. The zero value is the ordinary case.
+type topoConfig struct {
+	// linkScopedPodAddress puts a link scoped IPv4 on the pod interface ahead
+	// of the routable one, which is what an environment that also does IPv4
+	// link-local addressing ends up with.
+	linkScopedPodAddress bool
+	// noPodTxOffload makes the pod compute its checksums in software, so the
+	// eBPF program sees a finished checksum rather than a deferred one.
+	noPodTxOffload bool
+}
+
+type topoOpt func(*topoConfig)
+
+func withLinkScopedPodAddress() topoOpt { return func(c *topoConfig) { c.linkScopedPodAddress = true } }
+func withoutPodTxOffload() topoOpt      { return func(c *topoConfig) { c.noPodTxOffload = true } }
+
+func buildTopology(t *testing.T, opts ...topoOpt) *topology {
 	t.Helper()
+
+	var cfg topoConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 
 	top := &topology{
 		hostNSPath: "/run/netns/" + nsHost,
@@ -316,6 +552,11 @@ func buildTopology(t *testing.T) *topology {
 		if err := addrUp(physIface, physCIDR); err != nil {
 			return err
 		}
+		// Stand in for a NIC: finalise deferred checksums on the way out so the
+		// client sees what a real client would. See setTxChecksumOffload.
+		if err := setTxChecksumOffload(physIface, false); err != nil {
+			return err
+		}
 		if err := addrUp(lxcIface, lxcCIDR); err != nil {
 			return err
 		}
@@ -336,8 +577,20 @@ func buildTopology(t *testing.T) *topology {
 	}
 
 	if err := onThreadIn(top.podNS, func() error {
+		// Added first so it sits ahead of the routable address in the kernel's
+		// list, which is what decides the source address of a broadcast.
+		if cfg.linkScopedPodAddress {
+			if err := addScopedAddr(podIface, podLinkLocalCIDR, unix.RT_SCOPE_LINK); err != nil {
+				return err
+			}
+		}
 		if err := addrUp(podIface, podCIDR); err != nil {
 			return err
+		}
+		if cfg.noPodTxOffload {
+			if err := setTxChecksumOffload(podIface, false); err != nil {
+				return err
+			}
 		}
 		if err := defaultRoute(podIface, podGW); err != nil {
 			return err
@@ -447,7 +700,7 @@ func startDHCPServer(t *testing.T, top *topology) *dhcpServer {
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, cm, _, err := conn.ReadFrom(buf)
+			n, cm, peer, err := conn.ReadFrom(buf)
 			if err != nil {
 				return
 			}
@@ -465,11 +718,14 @@ func startDHCPServer(t *testing.T, top *topology) *dhcpServer {
 			if err != nil {
 				continue
 			}
-			// Exactly what Smee does: broadcast back out of the interface the
-			// request arrived on, because the client has no address yet.
-			_, _ = conn.WriteTo(reply.ToBytes(),
-				&ipv4.ControlMessage{IfIndex: cm.IfIndex},
-				&net.UDPAddr{IP: net.IPv4bcast, Port: 68})
+			// Exactly what Smee does: reply to the peer, but substitute the
+			// broadcast address when the client had none of its own. See the
+			// peer rewrite in smee/internal/dhcp/server and replyDestination.
+			dst := &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
+			if u, ok := peer.(*net.UDPAddr); ok && u.IP != nil && !u.IP.To4().Equal(net.IPv4zero) {
+				dst = &net.UDPAddr{IP: u.IP, Port: u.Port}
+			}
+			_, _ = conn.WriteTo(reply.ToBytes(), &ipv4.ControlMessage{IfIndex: cm.IfIndex}, dst)
 		}
 	}()
 
@@ -487,6 +743,13 @@ type receivedReply struct {
 	pkt    *dhcpv4.DHCPv4
 	srcIP  netip.Addr
 	srcMAC net.HardwareAddr
+
+	// Checksums as they arrived. The outbound program rewrites the source
+	// address, which both of these cover, and a receiver that verifies them —
+	// EDK2's UDP driver does — drops the reply if the repair was wrong.
+	ipChecksumOK  bool
+	udpChecksum   uint16
+	udpChecksumOK bool
 }
 
 // openClient opens a packet socket in the client namespace, which is the only
@@ -566,10 +829,13 @@ const (
 	udpHdrLen = 8
 )
 
-// encodeFrame builds a complete Ethernet frame carrying UDP over IPv4. The UDP
-// checksum is optional over IPv4, and withUDPChecksum selects between a
-// computed one and the zero that means "none".
-func encodeFrame(srcMAC, dstMAC net.HardwareAddr, srcIP, dstIP netip.Addr, srcPort, dstPort uint16, payload []byte, withUDPChecksum bool) []byte {
+// encodeFrame builds a complete Ethernet frame carrying a DHCP request: UDP
+// over IPv4 from the client port to the server port. The UDP checksum is
+// optional over IPv4, and withUDPChecksum selects between a computed one and
+// the zero that means "none".
+func encodeFrame(srcMAC, dstMAC net.HardwareAddr, srcIP, dstIP netip.Addr, payload []byte, withUDPChecksum bool) []byte {
+	const srcPort, dstPort = 68, 67
+
 	frame := make([]byte, ethHdrLen+ipHdrLen+udpHdrLen+len(payload))
 
 	copy(frame[0:6], dstMAC)
@@ -595,6 +861,22 @@ func encodeFrame(srcMAC, dstMAC net.HardwareAddr, srcIP, dstIP netip.Addr, srcPo
 		binary.BigEndian.PutUint16(udp[6:8], onesComplement(sum(udp, pseudoHeaderSum(src4, dst4, uint16(udpHdrLen+len(payload))))))
 	}
 
+	return frame
+}
+
+// encodeServerFrame builds a broadcast DHCP reply as another server on the
+// segment would send it: from port 67 to port 68.
+func encodeServerFrame(dstMAC net.HardwareAddr, srcIP netip.Addr, payload []byte) []byte {
+	frame := encodeFrame(net.HardwareAddr{0x02, 0, 0, 0, 0, 0x09}, broadcastMAC, srcIP, limitedBroadcast, payload, true)
+	binary.BigEndian.PutUint16(frame[ethHdrLen+ipHdrLen+0:], 67)
+	binary.BigEndian.PutUint16(frame[ethHdrLen+ipHdrLen+2:], 68)
+	// The UDP checksum covered the old ports, and a wrong one would be
+	// rejected before the program ever saw the packet.
+	udp := frame[ethHdrLen+ipHdrLen:]
+	binary.BigEndian.PutUint16(udp[6:8], 0)
+	src4, dst4 := srcIP.As4(), limitedBroadcast.As4()
+	binary.BigEndian.PutUint16(udp[6:8], onesComplement(sum(udp, pseudoHeaderSum(src4, dst4, uint16(len(udp))))))
+	_ = dstMAC
 	return frame
 }
 
@@ -625,11 +907,26 @@ func decodeReply(frame []byte, xid dhcpv4.TransactionID) (receivedReply, bool) {
 		return receivedReply{}, false
 	}
 
+	var src4, dst4 [4]byte
+	copy(src4[:], ip[12:16])
+	copy(dst4[:], ip[16:20])
+
+	// Summing a correct checksum together with the field holding it folds to
+	// all ones, which complements to zero.
+	udpChecksum := binary.BigEndian.Uint16(udp[6:8])
+	udpChecksumOK := true
+	if udpChecksum != 0 {
+		udpChecksumOK = onesComplement(sum(udp[:length], pseudoHeaderSum(src4, dst4, uint16(length)))) == 0
+	}
+
 	srcIP, _ := netip.AddrFromSlice(ip[12:16])
 	return receivedReply{
-		pkt:    pkt,
-		srcIP:  srcIP,
-		srcMAC: net.HardwareAddr(append([]byte(nil), frame[6:12]...)),
+		pkt:           pkt,
+		srcIP:         srcIP,
+		srcMAC:        net.HardwareAddr(append([]byte(nil), frame[6:12]...)),
+		ipChecksumOK:  onesComplement(sum(ip[:ihl], 0)) == 0,
+		udpChecksum:   udpChecksum,
+		udpChecksumOK: udpChecksumOK,
 	}, true
 }
 
@@ -656,6 +953,71 @@ func onesComplement(total uint32) uint16 {
 }
 
 func htons(v uint16) uint16 { return v<<8 | v>>8 }
+
+// ETHTOOL_STXCSUM, which still maps onto the modern tx-checksum features.
+const ethtoolSTxCsum = 0x17
+
+type ethtoolValue struct {
+	cmd  uint32
+	data uint32
+}
+
+// ifreqEthtool is struct ifreq with its union holding an ethtool command
+// pointer: 16 bytes of name and 24 bytes of union.
+type ifreqEthtool struct {
+	name [16]byte
+	data *ethtoolValue
+	_    [16]byte
+}
+
+// setTxChecksumOffload turns an interface's transmit checksum offload on or
+// off. Must be called from the interface's namespace.
+//
+// The tests need this because a veth is not a NIC. A real NIC finalises a
+// deferred (CHECKSUM_PARTIAL) checksum in hardware as the frame leaves, so a
+// receiver always sees a complete one. A veth advertises checksum offload and
+// then does nothing, so the deferred value travels all the way to the receiver
+// and there is nothing there to check. Turning the offload off makes the kernel
+// finalise it in software on the way out, which is the same thing a NIC does
+// and the only way to see on the wire what a real client would see.
+func setTxChecksumOffload(name string, enabled bool) error {
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open a socket for ethtool: %w", err)
+	}
+	defer unix.Close(fd)
+
+	value := ethtoolValue{cmd: ethtoolSTxCsum}
+	if enabled {
+		value.data = 1
+	}
+	req := ifreqEthtool{data: &value}
+	copy(req.name[:], name)
+
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), unix.SIOCETHTOOL, uintptr(unsafe.Pointer(&req)))
+	runtime.KeepAlive(value)
+	if errno != 0 {
+		return fmt.Errorf("set tx checksum offload on %s: %w", name, errno)
+	}
+	return nil
+}
+
+// addScopedAddr adds an address with an explicit scope, which addrUp cannot do.
+func addScopedAddr(name, cidr string, scope int) error {
+	l, err := netlink.LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("find %s: %w", name, err)
+	}
+	addr, err := netlink.ParseAddr(cidr)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", cidr, err)
+	}
+	addr.Scope = scope
+	if err := netlink.AddrAdd(l, addr); err != nil {
+		return fmt.Errorf("add %s to %s: %w", cidr, name, err)
+	}
+	return nil
+}
 
 // --- namespace plumbing -------------------------------------------------------
 

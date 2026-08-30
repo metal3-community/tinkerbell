@@ -41,6 +41,9 @@ type Info struct {
 	PhysicalMAC       net.HardwareAddr
 
 	// PodInterface, PodIndex and PodAddr describe the pod side of the veth.
+	// PodAddr is reported for logging only: the datapath does not care which
+	// address the pod replies from, and must not, because the kernel's choice
+	// and this one are made by different rules.
 	PodInterface string
 	PodIndex     int
 	PodAddr      netip.Addr
@@ -101,6 +104,14 @@ type Stats struct {
 	// Unconfigured counts packets that matched but found no usable
 	// configuration in the map. It should never move after [Setup] returns.
 	Unconfigured uint64
+
+	// OtherServerReplies counts DHCP replies seen on the physical segment
+	// that this pod did not send — our own leave by the egress side and are
+	// never seen here. It is the only view a pod with no interface on that
+	// segment gets of the rest of it, and in proxy mode it is the difference
+	// between "the real DHCP server is silent" and "our replies are not
+	// getting out".
+	OtherServerReplies uint64
 }
 
 // LogValues renders the counters as alternating key/value pairs for logr.
@@ -112,6 +123,7 @@ func (s Stats) LogValues() []any {
 		"toWireRedirected", s.ToWireRedirected,
 		"toWireError", s.ToWireError,
 		"unconfigured", s.Unconfigured,
+		"otherServerReplies", s.OtherServerReplies,
 	}
 }
 
